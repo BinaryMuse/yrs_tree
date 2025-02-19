@@ -1,6 +1,6 @@
 # yjs_tree
 
-A Rust library implementing a CRDT-based tree data structure powered by [Yjs](https://yjs.dev/). This implementation is based on the ["Mutable Tree Hierarchy" algorithm by Evan Wallace](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/).
+A Rust library implementing a CRDT-based tree data structure powered by [Yjs](https://yjs.dev/). This implementation is based on the ["Mutable Tree Hierarchy" algorithm](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/) by Evan Wallace.
 
 ## Overview
 
@@ -10,11 +10,8 @@ The implementation uses Yjs as the underlying CRDT framework and follows Evan Wa
 
 ## Installation
 
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-yjs_tree = "0.1.0"
+```bash
+cargo add yjs_tree
 ```
 
 ## Usage

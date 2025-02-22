@@ -1,5 +1,3 @@
-#![doc = include_str!("../README.md")]
-
 use std::{
     cell::{Cell, RefCell},
     error::Error,
@@ -14,6 +12,7 @@ use crate::{
     events::TreeUpdateEvent, node::Node, tree_structure::TreeStructure, Subscription, TreeObserver,
 };
 
+/// A tree CRDT backed by a Yrs document.
 #[derive(Clone)]
 pub struct Tree {
     structure: Arc<ReentrantMutex<RefCell<TreeStructure>>>,

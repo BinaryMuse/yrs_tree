@@ -6,13 +6,13 @@ use uuid::Uuid;
 
 use crate::{Tree, TreeError};
 
+/// A node in a tree.
 #[derive(Clone)]
 pub struct Node {
     id: String,
     tree: Arc<Tree>,
 }
 
-/// A node in a tree.
 impl Node {
     pub(crate) fn new(id: &str, tree: Arc<Tree>) -> Arc<Self> {
         Arc::new(Self {

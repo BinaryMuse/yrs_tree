@@ -1,13 +1,11 @@
-# yjs-tree
+# yrs_tree
 
-A CRDT-based tree hierarchy implementation for Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/).
-
-This library provides a conflict-free replicated data type (CRDT) for managing tree hierarchies that can be modified concurrently by multiple users while maintaining consistency. It's built on top of [Yjs](https://github.com/yjs/yjs).
+A CRDT-based tree hierarchy implementation for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/).
 
 ## Installation
 
 ```bash
-cargo add yjs_tree
+cargo add yrs_tree
 ```
 
 ## Usage
@@ -16,7 +14,7 @@ cargo add yjs_tree
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yjs_tree::{Tree, TreeUpdateEvent};
+use yrs_tree::{Tree, TreeUpdateEvent};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Yjs document and tree
@@ -50,7 +48,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yjs_tree::Tree;
+use yrs_tree::Tree;
 use yrs::{updates::decoder::Decode, ReadTxn, Transact, Update};
 
 fn main() -> Result<(), Box<dyn Error>> {

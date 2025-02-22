@@ -1,9 +1,9 @@
 [package]
-name = "yjs_tree"
+name = "yrs_tree"
 version = "0.1.0"
-description = "A Rust library implementing a CRDT-based tree data structure powered by Yjs"
+description = "A Rust library implementing a CRDT-based tree data structure powered by Yrs"
 authors = ["Michelle Tilley <michelle@tilley.tech>"]
-repository = "https://github.com/binarymuse/yjs_tree"
+repository = "https://github.com/binarymuse/yrs_tree"
 edition = "2021"
 license = "MIT"
 

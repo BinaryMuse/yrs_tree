@@ -516,16 +516,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yjs_tree"
-version = "0.1.0"
-dependencies = [
- "fractional_index",
- "parking_lot",
- "uuid",
- "yrs",
-]
-
-[[package]]
 name = "yrs"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,4 +531,14 @@ dependencies = [
  "smallstr",
  "smallvec",
  "thiserror",
+]
+
+[[package]]
+name = "yrs_tree"
+version = "0.1.0"
+dependencies = [
+ "fractional_index",
+ "parking_lot",
+ "uuid",
+ "yrs",
 ]

@@ -1,7 +1,7 @@
 use std::{error::Error, sync::Arc};
 
-use yjs_tree::Tree;
 use yrs::{updates::decoder::Decode, ReadTxn, Transact, Update};
+use yrs_tree::Tree;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let doc1 = Arc::new(yrs::Doc::new());

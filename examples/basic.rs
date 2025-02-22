@@ -1,6 +1,6 @@
 use std::{error::Error, sync::Arc};
 
-use yjs_tree::{Tree, TreeUpdateEvent};
+use yrs_tree::{Tree, TreeUpdateEvent};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let doc = Arc::new(yrs::Doc::new());

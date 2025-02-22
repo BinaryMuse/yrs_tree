@@ -1,6 +1,6 @@
 # yrs_tree
 
-A CRDT-based tree hierarchy implementation for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/).
+A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/). Changes among clients are guaranteed to converge into a consistent state, and the tree ensures that conflicts and cycles are handled correctly.
 
 ## Installation
 
@@ -42,6 +42,20 @@ fn main() -> Result<(), Box<dyn Error>> {
     node1.move_after(&node2)?;           // Move node1 after node2
     node4.move_before(&node3)?;          // Move node4 before node3
 
+    // Iterate over the tree in depth-first order
+    let nodes = tree
+        .traverse_dfs()
+        .map(|n| (n.id().to_string(), n.depth()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        nodes,
+        vec![("__ROOT__", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
+            .iter()
+            .map(|(id, depth)| (id.to_string(), *depth as usize))
+            .collect::<Vec<_>>()
+    );
+
     Ok(())
 }
 ```
@@ -73,6 +87,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     doc2.transact_mut()
         .apply_update(Update::decode_v1(&update).unwrap())?;
+
+    assert_eq!(tree1, tree2);
 
     Ok(())
 }

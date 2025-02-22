@@ -25,7 +25,8 @@ pub struct Tree {
 }
 
 /// Creates a new tree in the Yjs doc with the given container name.
-/// The tree owns this Yjs map, and it should not be modified manually.
+/// The tree will take over the map at the given name, and it should not
+/// be modified manually after creation.
 impl Tree {
     pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Arc<Self> {
         let yjs_map = Arc::new(RwLock::new(doc.get_or_insert_map(tree_name)));
@@ -312,10 +313,16 @@ mod tests {
 
         let nodes = tree
             .traverse_dfs()
-            .map(|n| n.id().to_string())
+            .map(|n| (n.id().to_string(), n.depth()))
             .collect::<Vec<_>>();
 
-        assert_eq!(nodes, vec!["__ROOT__", "2", "3", "4", "1"]);
+        assert_eq!(
+            nodes,
+            vec![("__ROOT__", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
+                .iter()
+                .map(|(id, depth)| (id.to_string(), *depth as usize))
+                .collect::<Vec<_>>()
+        );
 
         Ok(())
     }

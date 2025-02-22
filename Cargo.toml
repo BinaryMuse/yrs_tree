@@ -9,8 +9,6 @@ license = "MIT"
 
 [dependencies]
 fractional_index = "2.0.2"
-itertools = "0.14.0"
-orx-tree = "1.3.0"
 parking_lot = "0.12.3"
 uuid = { version = "1.13.2", features = ["v7"] }
 yrs = "0.22.0"

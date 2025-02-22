@@ -84,12 +84,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "either"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60b1af1c220855b6ceac025d3f6ecdd2b7c4894bfe9cd9bda4fbb4bc7c0d4cf0"
-
-[[package]]
 name = "event-listener"
 version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -160,15 +154,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
-name = "itertools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
-dependencies = [
- "either",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -217,85 +202,6 @@ name = "once_cell"
 version = "1.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "945462a4b81e43c4e3ba96bd7b49d834c6f61198356aa858733bc4acf3cbe62e"
-
-[[package]]
-name = "orx-fixed-vec"
-version = "3.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "866c30b4da32c1b19dd0dd883250cfadd5d07355eb2c590ae71107a0616dc98a"
-dependencies = [
- "orx-iterable",
- "orx-pinned-vec",
- "orx-pseudo-default",
-]
-
-[[package]]
-name = "orx-iterable"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d22609824580ce380e924424a9771c1b6a2786e229fe64185078b17470e445e4"
-dependencies = [
- "orx-self-or",
-]
-
-[[package]]
-name = "orx-pinned-vec"
-version = "3.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d771de46a0d37e050bd3a8d024006ffdab61ec131bc475329401700ba561be2c"
-dependencies = [
- "orx-iterable",
- "orx-pseudo-default",
-]
-
-[[package]]
-name = "orx-pseudo-default"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51774ae0c9a16454856d44c31d2c837e62675f6e410af34ae59c534ec34460d0"
-
-[[package]]
-name = "orx-self-or"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "111567c59e690b4d65bca4076c41df459cfe07296380534ac4b9cc882add13bf"
-
-[[package]]
-name = "orx-selfref-col"
-version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a7062427f16933205b7c18c188fc4e809b5bdea0950f25a7b8f8f78baa37bf9"
-dependencies = [
- "orx-fixed-vec",
- "orx-pinned-vec",
- "orx-pseudo-default",
- "orx-split-vec",
-]
-
-[[package]]
-name = "orx-split-vec"
-version = "3.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413e86628dbf368abaa47ee6bf55c3e20bedd8504fcb7fe1a7ae72227b9e755f"
-dependencies = [
- "orx-iterable",
- "orx-pinned-vec",
- "orx-pseudo-default",
-]
-
-[[package]]
-name = "orx-tree"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88936b050ff35ca1f03f21125f6c136fd6a1da11688b70d7b861bccabc23034f"
-dependencies = [
- "orx-iterable",
- "orx-pinned-vec",
- "orx-pseudo-default",
- "orx-self-or",
- "orx-selfref-col",
- "orx-split-vec",
-]
 
 [[package]]
 name = "parking"
@@ -614,8 +520,6 @@ name = "yjs_tree"
 version = "0.1.0"
 dependencies = [
  "fractional_index",
- "itertools",
- "orx-tree",
  "parking_lot",
  "uuid",
  "yrs",

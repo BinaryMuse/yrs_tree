@@ -4,6 +4,11 @@ version = "0.1.1"
 description = "A Rust library implementing a CRDT-based tree data structure powered by Yrs"
 authors = ["Michelle Tilley <michelle@tilley.tech>"]
 repository = "https://github.com/binarymuse/yrs_tree"
+documentation = "https://docs.rs/yrs_tree/"
+categories = ["data-structures"]
+homepage = "https://github.com/binarymuse/yrs_tree"
+keywords = ["crdt", "tree", "yrs", "yjs"]
+readme = "README.md"
 edition = "2021"
 license = "MIT"
 

@@ -27,6 +27,12 @@ pub struct Subscription {
     observer: Weak<TreeObserver>,
 }
 
+impl Default for TreeObserver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeObserver {
     pub fn new() -> Self {
         Self {

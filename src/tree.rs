@@ -174,11 +174,11 @@ impl fmt::Debug for Tree {
 impl fmt::Display for Tree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tree = Arc::new(self.clone());
-        let mut iter = tree.traverse_dfs();
+        let iter = tree.traverse_dfs();
         let mut last_depth = 0;
         let mut is_last_at_depth = vec![false];
 
-        while let Some(node) = iter.next() {
+        for node in iter {
             let depth = node.depth();
 
             // Adjust the is_last_at_depth vector
@@ -192,7 +192,7 @@ impl fmt::Display for Tree {
             let parent = if node.id() == "__ROOT__" {
                 None
             } else {
-                self.get_parent(&node.id())
+                self.get_parent(node.id())
             };
 
             if let Some(parent_id) = parent {
@@ -255,7 +255,7 @@ impl Iterator for DfsIter {
                 let mut current = last_node.clone();
                 loop {
                     let parent_id = self.structure.get_parent(&current)?;
-                    let siblings = self.structure.get_children(&parent_id)?;
+                    let siblings = self.structure.get_children(parent_id)?;
                     let current_idx = siblings.iter().position(|id| id == &current)?;
 
                     if current_idx + 1 < siblings.len() {

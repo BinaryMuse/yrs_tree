@@ -63,7 +63,7 @@ impl Node {
         index: Option<usize>,
     ) -> Result<Arc<Self>, Box<dyn Error>> {
         self.tree.update_node(id, &self.id, index)?;
-        Ok(Self::new(&id, self.tree.clone()))
+        Ok(Self::new(id, self.tree.clone()))
     }
 
     /// Moves the node to the given parent node at the given index.

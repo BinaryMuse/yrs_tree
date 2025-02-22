@@ -159,7 +159,7 @@ impl TreeStructure {
                 parent_id: None,
                 children: vec![],
                 fi: fi.clone(),
-                edge_map: container.edge_map.clone().into(),
+                edge_map: container.edge_map.clone(),
             };
             self.nodes.insert(id.clone(), node);
         }
@@ -318,7 +318,7 @@ impl TreeStructure {
             self.nodes
                 .get(&parent_children[index])
                 .map(|node| node.fi.clone())
-                .unwrap_or(FractionalIndex::default())
+                .unwrap_or_default()
         };
 
         if let Some(node) = self.nodes.get_mut(id) {

@@ -1,6 +1,6 @@
 [package]
 name = "yrs_tree"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Rust library implementing a CRDT-based tree data structure powered by Yrs"
 authors = ["Michelle Tilley <michelle@tilley.tech>"]
 repository = "https://github.com/binarymuse/yrs_tree"

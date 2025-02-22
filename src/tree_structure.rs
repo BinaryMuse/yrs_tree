@@ -114,7 +114,7 @@ impl TreeStructure {
         let containers = Self::collect_node_containers(map, txn);
         self.create_initial_nodes(&containers);
         let non_attached_nodes = self.process_parent_relationships(&containers);
-        self.reattach_nodes(non_attached_nodes, map, txn);
+        self.reattach_nodes(non_attached_nodes);
         self.update_children_order();
     }
 
@@ -191,12 +191,7 @@ impl TreeStructure {
         non_attached_nodes
     }
 
-    fn reattach_nodes(
-        &mut self,
-        mut non_attached_nodes: BTreeSet<String>,
-        map: &MapRef,
-        txn: &yrs::TransactionMut,
-    ) {
+    fn reattach_nodes(&mut self, mut non_attached_nodes: BTreeSet<String>) {
         while !non_attached_nodes.is_empty() {
             // find the historical parent with the highest edge value
             // that is also not inside the non_attached_nodes set
@@ -215,12 +210,6 @@ impl TreeStructure {
             if let Some((parent_id, _)) = first_valid_parent {
                 node.parent_id = Some(parent_id.clone());
                 let (edge_id, edge_val) = node.edge_map.add_edge(parent_id);
-                let yrs::Out::YMap(container) = map.get(txn, &node.id).unwrap() else {
-                    panic!("Node is not a container: {}", node.id);
-                };
-                let yrs::Out::YMap(em) = container.get(txn, "em").unwrap() else {
-                    panic!("Edge map is not a container: {}", node.id);
-                };
                 self.pending_edge_map_updates
                     .push((node.id.clone(), edge_id, edge_val));
                 non_attached_nodes.remove(&next);

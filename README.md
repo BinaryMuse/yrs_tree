@@ -10,6 +10,8 @@ cargo add yrs_tree
 
 ## Usage
 
+[Documentation](https://docs.rs/yrs_tree/)
+
 ### Basic Example
 
 ```rust

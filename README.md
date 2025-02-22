@@ -27,9 +27,16 @@ let doc = Arc::new(Doc::new());
 
 // Create a new tree
 let tree = Tree::new(doc.clone()), "test");
+let root = tree.root();
 
-// Add nodes and manipulate the tree
-// (More detailed examples coming soon)
+let node1 = root.create_node("1");
+let node2 = root.create_node_at("2", 0)
+let node3 = root.create_node_at("3", 1)
+let node4 = node3.create_node("4");
+node3.move_to(node2);
+
+node4.move_before(node2);
+node4.move_after(node2);
 ```
 
 ## How It Works

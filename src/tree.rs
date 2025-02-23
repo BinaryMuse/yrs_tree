@@ -1,6 +1,5 @@
 use std::{
     cell::{Cell, RefCell},
-    error::Error,
     fmt,
     sync::Arc,
 };
@@ -12,7 +11,7 @@ use crate::{
     events::TreeEvent,
     node::{Node, NodeId},
     tree_structure::TreeStructure,
-    Subscription, TreeError, TreeObserver,
+    Result, Subscription, TreeError, TreeObserver,
 };
 
 pub use crate::node::NodeApi;
@@ -43,14 +42,14 @@ pub struct Tree {
     #[allow(dead_code)] // cancels subscription when dropped
     subscription: RefCell<Option<yrs::Subscription>>,
     yjs_observer_disabled: Cell<bool>,
-    poisioned: RefCell<Option<String>>,
+    poisioned: RefCell<Option<TreeError>>,
 }
 
 impl Tree {
     /// Creates a new tree in the Yjs doc with the given container name.
     /// The tree will take over the map at the given name in the Yrs doc, and it should not
     /// be modified manually after creation.
-    pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Result<Arc<Self>, Box<dyn Error>> {
+    pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Result<Arc<Self>> {
         let yjs_map = Arc::new(RwLock::new(doc.get_or_insert_map(tree_name)));
         let structure = Arc::new(ReentrantMutex::new(RefCell::new(TreeStructure::new())));
         let observer = Arc::new(TreeObserver::new());
@@ -109,7 +108,7 @@ impl Tree {
             match update_result {
                 Ok(_) => observer_clone.notify(&TreeEvent::TreeUpdated(tree_clone.clone())),
                 Err(e) => {
-                    tree_clone.mark_poisoned(e.to_string());
+                    tree_clone.mark_poisoned(e);
                 }
             }
         });
@@ -119,11 +118,11 @@ impl Tree {
         Ok(tree)
     }
 
-    fn mark_poisoned(self: &Arc<Self>, msg: String) {
-        self.poisioned.borrow_mut().replace(msg.clone());
+    fn mark_poisoned(self: &Arc<Self>, orig: TreeError) {
+        self.poisioned.borrow_mut().replace(orig.clone());
         self.observer.notify(&TreeEvent::TreePoisoned(
             self.clone(),
-            TreeError::TreePoisoned(msg),
+            TreeError::TreePoisoned(Box::new(orig)),
         ))
     }
 
@@ -151,9 +150,9 @@ impl Tree {
         id: &NodeId,
         parent: &NodeId,
         index: Option<usize>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         if let Some(poisioned) = self.poisioned.borrow().as_ref() {
-            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+            return Err(TreeError::TreePoisoned(Box::new(poisioned.clone())).into());
         }
 
         let lock = self.structure.lock();
@@ -168,10 +167,11 @@ impl Tree {
             Ok(())
         };
 
-        if let Err(e) = res {
-            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
-                self.mark_poisoned(err.to_string());
-                return Err(e);
+        if let Err(e) = &res {
+            if let TreeError::TreePoisoned(err) = e {
+                self.mark_poisoned((**err).clone());
+                let clone = e.clone();
+                return Err(clone);
             }
         }
 
@@ -224,9 +224,9 @@ impl Tree {
         id: &NodeId,
         key: &str,
         value: V,
-    ) -> Result<V::Return, Box<dyn Error>> {
+    ) -> Result<V::Return> {
         if let Some(poisioned) = self.poisioned.borrow().as_ref() {
-            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+            return Err(TreeError::TreePoisoned(Box::new(poisioned.clone())).into());
         }
 
         let mut txn = self.doc.transact_mut_with("yrs_tree_data");
@@ -238,8 +238,8 @@ impl Tree {
             .set_data(id, key, value, &map, &mut txn);
 
         if let Err(e) = &result {
-            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
-                self.mark_poisoned(err.to_string());
+            if let TreeError::TreePoisoned(err) = e {
+                self.mark_poisoned((**err).clone());
                 return result;
             }
         }
@@ -247,13 +247,9 @@ impl Tree {
         result
     }
 
-    pub(crate) fn get_data(
-        self: &Arc<Self>,
-        id: &NodeId,
-        key: &str,
-    ) -> Result<Option<yrs::Out>, Box<dyn Error>> {
+    pub(crate) fn get_data(self: &Arc<Self>, id: &NodeId, key: &str) -> Result<Option<yrs::Out>> {
         if let Some(poisioned) = self.poisioned.borrow().as_ref() {
-            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+            return Err(TreeError::TreePoisoned(Box::new(poisioned.clone())).into());
         }
 
         let mut txn = self.doc.transact();
@@ -265,8 +261,8 @@ impl Tree {
             .get_data(id, key, &map, &mut txn);
 
         if let Err(e) = &result {
-            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
-                self.mark_poisoned(err.to_string());
+            if let TreeError::TreePoisoned(err) = e {
+                self.mark_poisoned((**err).clone());
                 return result;
             }
         }
@@ -278,7 +274,7 @@ impl Tree {
         self: &Arc<Self>,
         id: &NodeId,
         key: &str,
-    ) -> Result<V, Box<dyn Error>> {
+    ) -> Result<V> {
         let result = self.structure.lock().borrow().get_data_as(
             id,
             key,
@@ -287,8 +283,8 @@ impl Tree {
         );
 
         if let Err(e) = &result {
-            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
-                self.mark_poisoned(err.to_string());
+            if let TreeError::TreePoisoned(err) = e {
+                self.mark_poisoned((**err).clone());
                 return result;
             }
         }
@@ -320,20 +316,17 @@ impl NodeApi for Tree {
     }
 
     #[inline]
-    fn create_child(self: &Arc<Self>) -> Result<Arc<Node>, Box<dyn Error>> {
+    fn create_child(self: &Arc<Self>) -> Result<Arc<Node>> {
         self.root().create_child()
     }
 
     #[inline]
-    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>, Box<dyn Error>> {
+    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>> {
         self.root().create_child_at(index)
     }
 
     #[inline]
-    fn create_child_with_id(
-        self: &Arc<Self>,
-        id: impl Into<NodeId>,
-    ) -> Result<Arc<Node>, Box<dyn Error>> {
+    fn create_child_with_id(self: &Arc<Self>, id: impl Into<NodeId>) -> Result<Arc<Node>> {
         self.root().create_child_with_id(id)
     }
 
@@ -342,26 +335,22 @@ impl NodeApi for Tree {
         self: &Arc<Self>,
         id: impl Into<NodeId>,
         index: usize,
-    ) -> Result<Arc<Node>, Box<dyn Error>> {
+    ) -> Result<Arc<Node>> {
         self.root().create_child_with_id_at(id, index)
     }
 
     #[inline]
-    fn move_to(
-        self: &Arc<Self>,
-        _parent: &Node,
-        _index: Option<usize>,
-    ) -> Result<(), Box<dyn Error>> {
+    fn move_to(self: &Arc<Self>, _parent: &Node, _index: Option<usize>) -> Result<()> {
         Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
     }
 
     #[inline]
-    fn move_before(self: &Arc<Self>, _other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+    fn move_before(self: &Arc<Self>, _other: &Arc<Node>) -> Result<()> {
         Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
     }
 
     #[inline]
-    fn move_after(self: &Arc<Self>, _other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+    fn move_after(self: &Arc<Self>, _other: &Arc<Node>) -> Result<()> {
         Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
     }
 
@@ -522,7 +511,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() -> Result<(), Box<dyn Error>> {
+    fn it_works() -> Result<()> {
         let doc = yrs::Doc::new();
         let tree = Tree::new(Arc::new(doc), "test")?;
         let root = tree.root();
@@ -556,7 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sync() -> Result<(), Box<dyn Error>> {
+    fn test_sync() -> Result<()> {
         let doc1 = Arc::new(yrs::Doc::new());
         let doc2 = Arc::new(yrs::Doc::new());
 
@@ -576,7 +565,8 @@ mod tests {
         drop(txn);
 
         doc2.transact_mut()
-            .apply_update(Update::decode_v1(&update).unwrap())?;
+            .apply_update(Update::decode_v1(&update).unwrap())
+            .unwrap();
 
         assert_eq!(tree1, tree2);
 
@@ -584,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_moving_after_cycles() -> Result<(), Box<dyn Error>> {
+    fn handles_moving_after_cycles() -> Result<()> {
         let doc1 = Arc::new(yrs::Doc::new());
         let doc2 = Arc::new(yrs::Doc::new());
 
@@ -596,7 +586,7 @@ mod tests {
         let node_a1 = node_c1.create_child_with_id("A")?;
         let node_b1 = node_c1.create_child_with_id("B")?;
 
-        sync_docs(&doc1, &doc2)?;
+        sync_docs(&doc1, &doc2).unwrap();
 
         // Peer 1 moves A to be a child of B
         node_a1.move_to(&node_b1, None)?;
@@ -605,7 +595,7 @@ mod tests {
         let node_a2 = tree2.get_node("A").unwrap();
         node_b2.move_to(&node_a2, None)?;
 
-        sync_docs(&doc1, &doc2)?;
+        sync_docs(&doc1, &doc2).unwrap();
 
         // Without specially handling the edge map when
         // reparenting, this will unintuitively move A to be a child of D
@@ -625,7 +615,7 @@ mod tests {
     }
 
     #[test]
-    fn errors_creating_root() -> Result<(), Box<dyn Error>> {
+    fn errors_creating_root() -> Result<()> {
         let doc = Arc::new(yrs::Doc::new());
         let tree = Tree::new(doc, "test")?;
 
@@ -636,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_poisioning() -> Result<(), Box<dyn Error>> {
+    fn handles_poisioning() -> Result<()> {
         let doc = Arc::new(yrs::Doc::new());
         let tree = Tree::new(doc.clone(), "test")?;
         let poisoned = Arc::new(Mutex::new(false));
@@ -668,7 +658,7 @@ mod tests {
         Ok(())
     }
 
-    fn sync_docs(doc1: &yrs::Doc, doc2: &yrs::Doc) -> Result<(), Box<dyn Error>> {
+    fn sync_docs(doc1: &yrs::Doc, doc2: &yrs::Doc) -> std::result::Result<(), Box<dyn Error>> {
         let mut txn1 = doc1.transact_mut();
         let sv1 = txn1.state_vector();
 

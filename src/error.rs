@@ -11,7 +11,7 @@ pub enum TreeError {
     UnsupportedOperation(String),
     InvalidId(String),
     BadYrsDoc(String),
-    TreePoisoned(String),
+    TreePoisoned(Box<TreeError>),
 }
 
 impl Error for TreeError {}

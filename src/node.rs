@@ -1,11 +1,10 @@
-use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
 use uuid::Uuid;
 use yrs::block::Prelim;
 
-use crate::{Tree, TreeError};
+use crate::{Result, Tree, TreeError};
 
 /// The ID of a node in a tree. Strings can be made into `NodeId`s using the `into()` method,
 /// and `NodeId`s can be converted back into strings using the `to_string()` method.
@@ -66,23 +65,20 @@ pub trait NodeApi {
     fn id(self: &Arc<Self>) -> &NodeId;
 
     /// Creates a new child node with a generated ID.
-    fn create_child(self: &Arc<Self>) -> Result<Arc<Node>, Box<dyn Error>>;
+    fn create_child(self: &Arc<Self>) -> Result<Arc<Node>>;
 
     /// Creates a new child node with a generated ID at the given index in the parent's children.
-    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>, Box<dyn Error>>;
+    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>>;
 
     /// Creates a new child node with the given ID at the end of the parent's children.
-    fn create_child_with_id(
-        self: &Arc<Self>,
-        id: impl Into<NodeId>,
-    ) -> Result<Arc<Node>, Box<dyn Error>>;
+    fn create_child_with_id(self: &Arc<Self>, id: impl Into<NodeId>) -> Result<Arc<Node>>;
 
     /// Creates a new child node with the given ID at the given index in the parent's children.
     fn create_child_with_id_at(
         self: &Arc<Self>,
         id: impl Into<NodeId>,
         index: usize,
-    ) -> Result<Arc<Node>, Box<dyn Error>>;
+    ) -> Result<Arc<Node>>;
 
     /// Moves the node to the given parent, placing it in that parent's children at the given index.
     ///
@@ -109,8 +105,7 @@ pub trait NodeApi {
     /// ```
     ///
     /// Passing `None` as the index moves the node to the end of the parent's children.
-    fn move_to(self: &Arc<Self>, parent: &Node, index: Option<usize>)
-        -> Result<(), Box<dyn Error>>;
+    fn move_to(self: &Arc<Self>, parent: &Node, index: Option<usize>) -> Result<()>;
 
     /// Moves the node before the given node.
     ///
@@ -135,7 +130,7 @@ pub trait NodeApi {
     ///    ├──B
     ///    └──E
     /// ```
-    fn move_before(self: &Arc<Self>, other: &Arc<Node>) -> Result<(), Box<dyn Error>>;
+    fn move_before(self: &Arc<Self>, other: &Arc<Node>) -> Result<()>;
 
     /// Moves the node after the given node.
     ///
@@ -160,7 +155,7 @@ pub trait NodeApi {
     ///    ├──E
     ///    └──B
     /// ```
-    fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<(), Box<dyn Error>>;
+    fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<()>;
 
     /// Returns the children of the node.
     fn children(self: &Arc<Self>) -> Vec<Arc<Node>>;
@@ -194,7 +189,7 @@ impl Node {
         self: &Arc<Self>,
         id: impl Into<NodeId>,
         index: Option<usize>,
-    ) -> Result<Arc<Self>, Box<dyn Error>> {
+    ) -> Result<Arc<Self>> {
         let id = id.into();
 
         if id == NodeId::Root {
@@ -207,11 +202,7 @@ impl Node {
         Ok(Self::new(id, self.tree.clone()))
     }
 
-    fn move_relative(
-        self: &Arc<Self>,
-        other: &Arc<Node>,
-        offset: usize,
-    ) -> Result<(), Box<dyn Error>> {
+    fn move_relative(self: &Arc<Self>, other: &Arc<Node>, offset: usize) -> Result<()> {
         if other.id == self.id {
             return Err(TreeError::Cycle(self.id.clone(), other.id.clone()).into());
         }
@@ -254,11 +245,7 @@ impl Node {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set<V: Prelim + Into<yrs::Any>>(
-        &self,
-        key: &str,
-        value: V,
-    ) -> Result<V::Return, Box<dyn Error>> {
+    pub fn set<V: Prelim + Into<yrs::Any>>(&self, key: &str, value: V) -> Result<V::Return> {
         self.tree.set_data(&self.id, key, value)
     }
 
@@ -287,7 +274,7 @@ impl Node {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get(&self, key: &str) -> Result<Option<yrs::Out>, Box<dyn Error>> {
+    pub fn get(&self, key: &str) -> Result<Option<yrs::Out>> {
         self.tree.get_data(&self.id, key)
     }
 
@@ -315,7 +302,7 @@ impl Node {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_as<V: serde::de::DeserializeOwned>(&self, key: &str) -> Result<V, Box<dyn Error>> {
+    pub fn get_as<V: serde::de::DeserializeOwned>(&self, key: &str) -> Result<V> {
         self.tree.get_data_as(&self.id, key)
     }
 }
@@ -325,20 +312,17 @@ impl NodeApi for Node {
         &self.id
     }
 
-    fn create_child(self: &Arc<Self>) -> Result<Arc<Self>, Box<dyn Error>> {
+    fn create_child(self: &Arc<Self>) -> Result<Arc<Self>> {
         let id = Uuid::now_v7().to_string();
         self.create_child_with_id(id)
     }
 
-    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Self>, Box<dyn Error>> {
+    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Self>> {
         let id = Uuid::now_v7().to_string();
         self.do_create_child(id, Some(index))
     }
 
-    fn create_child_with_id(
-        self: &Arc<Self>,
-        id: impl Into<NodeId>,
-    ) -> Result<Arc<Self>, Box<dyn Error>> {
+    fn create_child_with_id(self: &Arc<Self>, id: impl Into<NodeId>) -> Result<Arc<Self>> {
         self.do_create_child(id, None)
     }
 
@@ -346,7 +330,7 @@ impl NodeApi for Node {
         self: &Arc<Self>,
         id: impl Into<NodeId>,
         index: usize,
-    ) -> Result<Arc<Self>, Box<dyn Error>> {
+    ) -> Result<Arc<Self>> {
         self.do_create_child(id, Some(index))
     }
 
@@ -390,19 +374,15 @@ impl NodeApi for Node {
         depth
     }
 
-    fn move_to(
-        self: &Arc<Self>,
-        parent: &Node,
-        index: Option<usize>,
-    ) -> Result<(), Box<dyn Error>> {
+    fn move_to(self: &Arc<Self>, parent: &Node, index: Option<usize>) -> Result<()> {
         self.tree.update_node(&self.id, &parent.id, index)
     }
 
-    fn move_before(self: &Arc<Self>, other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+    fn move_before(self: &Arc<Self>, other: &Arc<Node>) -> Result<()> {
         self.move_relative(other, 0)
     }
 
-    fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+    fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<()> {
         self.move_relative(other, 1)
     }
 }

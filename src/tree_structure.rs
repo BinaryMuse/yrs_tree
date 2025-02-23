@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeSet, HashMap},
-    error::Error,
     ops::{Deref, DerefMut},
     sync::Arc,
 };
@@ -9,7 +8,7 @@ use fractional_index::FractionalIndex;
 use parking_lot::RwLock;
 use yrs::{block::Prelim, types::ToJson, Any, Map, MapPrelim, MapRef, Out};
 
-use crate::{node::NodeId, TreeError};
+use crate::{node::NodeId, Result, TreeError};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EdgeMap(HashMap<String, i64>);
@@ -105,11 +104,7 @@ impl TreeStructure {
         self.nodes.get(id)
     }
 
-    pub(crate) fn init_from_yjs(
-        &mut self,
-        map: &MapRef,
-        txn: &yrs::TransactionMut,
-    ) -> Result<(), Box<dyn Error>> {
+    pub(crate) fn init_from_yjs(&mut self, map: &MapRef, txn: &yrs::TransactionMut) -> Result<()> {
         // Clear nodes in case of re-initialization due to large Yjs updates
         self.nodes.clear();
 
@@ -126,7 +121,7 @@ impl TreeStructure {
         &mut self,
         map: Arc<RwLock<MapRef>>,
         txn: &yrs::TransactionMut,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         let map = map.read();
         self.init_from_yjs(&map, txn)
     }
@@ -136,7 +131,7 @@ impl TreeStructure {
         txn: &T,
         map: &MapRef,
         id: &NodeId,
-    ) -> Result<MapRef, Box<dyn Error>> {
+    ) -> Result<MapRef> {
         let container = map.get(txn, &id.to_string()).unwrap();
         let yrs::Out::YMap(container) = container else {
             return Err(
@@ -192,7 +187,7 @@ impl TreeStructure {
     fn process_parent_relationships(
         &mut self,
         containers: &Vec<NodeContainer>,
-    ) -> Result<BTreeSet<NodeId>, Box<dyn Error>> {
+    ) -> Result<BTreeSet<NodeId>> {
         let nodes_to_process = containers;
 
         for node in nodes_to_process {
@@ -221,10 +216,7 @@ impl TreeStructure {
         Ok(non_attached_nodes)
     }
 
-    fn reattach_nodes(
-        &mut self,
-        mut non_attached_nodes: BTreeSet<NodeId>,
-    ) -> Result<(), Box<dyn Error>> {
+    fn reattach_nodes(&mut self, mut non_attached_nodes: BTreeSet<NodeId>) -> Result<()> {
         while !non_attached_nodes.is_empty() {
             // find the historical parent with the highest edge value
             // that is also not inside the non_attached_nodes set
@@ -330,7 +322,7 @@ impl TreeStructure {
         index: Option<usize>,
         map: &MapRef,
         txn: &mut yrs::TransactionMut,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         // To determine the new fractional index, we need to know the parent's childrens' fractional indices
         let parent_children = self
             .get_node(parent)
@@ -403,18 +395,20 @@ impl TreeStructure {
         value: V,
         map: &MapRef,
         txn: &mut yrs::TransactionMut,
-    ) -> Result<V::Return, Box<dyn Error>> {
+    ) -> Result<V::Return> {
         let yrs_map = self.get_yrs_map_for_node(txn, map, id)?;
         let data_map = yrs_map.get(txn, "data");
 
         let data_map = match data_map {
             Some(Out::YMap(data_map)) => data_map,
             Some(_) => {
-                return Err(TreeError::TreePoisoned(format!(
-                    "Data map for node {} is not a map",
-                    id
-                ))
-                .into());
+                return Err(
+                    TreeError::TreePoisoned(Box::new(TreeError::BadYrsDoc(format!(
+                        "Data map for node {} is not a map",
+                        id
+                    ))))
+                    .into(),
+                );
             }
             None => yrs_map.insert(txn, "data", MapPrelim::default()),
         };
@@ -430,13 +424,15 @@ impl TreeStructure {
         key: &str,
         map: &MapRef,
         txn: &mut yrs::Transaction,
-    ) -> Result<Option<yrs::Out>, Box<dyn Error>> {
+    ) -> Result<Option<yrs::Out>> {
         let Ok(yrs_map) = self.get_yrs_map_for_node(txn, map, id) else {
-            return Err(TreeError::TreePoisoned(format!(
-                "Container map for node {} not found",
-                id
-            ))
-            .into());
+            return Err(
+                TreeError::TreePoisoned(Box::new(TreeError::BadYrsDoc(format!(
+                    "Container for node {} not found",
+                    id
+                ))))
+                .into(),
+            );
         };
 
         let data_map = yrs_map.get(txn, "data");
@@ -446,11 +442,13 @@ impl TreeStructure {
                 let result = data_map.get(txn, key);
                 Ok(result)
             }
-            Some(_) => Err(TreeError::TreePoisoned(format!(
-                "Data map for node {} is not a map",
-                id
-            ))
-            .into()),
+            Some(_) => Err(
+                TreeError::TreePoisoned(Box::new(TreeError::BadYrsDoc(format!(
+                    "Data container for node {} is not a map",
+                    id
+                ))))
+                .into(),
+            ),
             // No data set yet
             _ => Ok(None),
         }
@@ -462,15 +460,14 @@ impl TreeStructure {
         key: &str,
         map: &MapRef,
         txn: &mut yrs::Transaction,
-    ) -> Result<V, Box<dyn Error>> {
+    ) -> Result<V> {
         let any = match self.get_data(id, key, map, txn)? {
             Some(any) => any,
             None => yrs::Out::Any(yrs::Any::Null),
         };
         let json = any.to_json(txn);
         yrs::encoding::serde::from_any(&json).map_err(|e| {
-            TreeError::TreePoisoned(format!("Error deserializing data for node {}: {}", id, e))
-                .into()
+            TreeError::BadYrsDoc(format!("Error deserializing data for node {}: {}", id, e)).into()
         })
     }
 
@@ -482,21 +479,25 @@ impl TreeStructure {
         &mut self,
         map: &MapRef,
         txn: &mut yrs::TransactionMut,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<()> {
         for (node_id, edge_id, edge_val) in self.pending_edge_map_updates.iter() {
             let yrs::Out::YMap(container) = map.get(txn, &node_id.to_string()).unwrap() else {
-                return Err(TreeError::TreePoisoned(format!(
-                    "Node is not a container: {}",
-                    node_id
-                ))
-                .into());
+                return Err(
+                    TreeError::TreePoisoned(Box::new(TreeError::BadYrsDoc(format!(
+                        "Node is not a container: {}",
+                        node_id
+                    ))))
+                    .into(),
+                );
             };
             let yrs::Out::YMap(edge_map) = container.get(txn, "em").unwrap() else {
-                return Err(TreeError::TreePoisoned(format!(
-                    "Edge map is not a container: {}",
-                    node_id
-                ))
-                .into());
+                return Err(
+                    TreeError::TreePoisoned(Box::new(TreeError::BadYrsDoc(format!(
+                        "Edge map is not a container: {}",
+                        node_id
+                    ))))
+                    .into(),
+                );
             };
             edge_map.insert(txn, edge_id.to_string(), *edge_val);
         }
@@ -527,7 +528,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_initial_data() -> Result<(), Box<dyn Error>> {
+    fn handles_initial_data() -> Result<()> {
         let doc = Doc::new();
         let map = doc.get_or_insert_map("test");
         let mut txn = doc.transact_mut();
@@ -577,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    fn handles_cycles() -> Result<(), Box<dyn Error>> {
+    fn handles_cycles() -> Result<()> {
         let doc = Doc::new();
         let map = doc.get_or_insert_map("test");
         let mut txn = doc.transact_mut();

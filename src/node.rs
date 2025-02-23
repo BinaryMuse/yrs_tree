@@ -57,8 +57,8 @@ impl From<String> for NodeId {
 }
 
 /// A trait for objects that can behave like a node in a tree;
-/// this is implemented for [`Node`] and [`Tree`] (where the
-/// operations are called on the root node).
+/// this is implemented for [`Node`] and [`Tree`]. When these methods
+/// are used on a [`Tree`], they behave as if they were called on the root node.
 pub trait NodeApi {
     /// Returns the ID of the node.
     fn id(self: &Arc<Self>) -> &NodeId;
@@ -174,7 +174,10 @@ pub trait NodeApi {
     fn depth(self: &Arc<Self>) -> usize;
 }
 
-/// A node in a tree; see [`NodeApi`] for the operations that can be performed on a node.
+/// A node in a tree.
+///
+/// * See [`Tree`] for methods to create and find nodes in the tree.
+/// * See [`NodeApi`] for the operations that can be performed on a node.
 #[derive(Clone)]
 pub struct Node {
     id: NodeId,

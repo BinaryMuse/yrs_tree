@@ -7,8 +7,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let doc1 = Arc::new(yrs::Doc::new());
     let doc2 = Arc::new(yrs::Doc::new());
 
-    let tree1 = Tree::new(doc1.clone(), "test");
-    let tree2 = Tree::new(doc2.clone(), "test");
+    let tree1 = Tree::new(doc1.clone(), "test")?;
+    let tree2 = Tree::new(doc2.clone(), "test")?;
 
     let node1 = tree1.create_child_with_id("1")?;
     let node2 = tree1.create_child_with_id("2")?;

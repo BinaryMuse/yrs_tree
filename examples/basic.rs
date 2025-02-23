@@ -1,14 +1,18 @@
 use std::{error::Error, sync::Arc};
 
-use yrs_tree::{NodeApi, Tree, TreeUpdateEvent};
+use yrs_tree::{NodeApi, Tree, TreeEvent};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let doc = Arc::new(yrs::Doc::new());
-    let tree = Tree::new(doc.clone(), "test");
+    let tree = Tree::new(doc.clone(), "test")?;
 
-    let _sub = tree.on_change(|e| {
-        let TreeUpdateEvent(tree) = e;
-        println!("{}", tree);
+    let _sub = tree.on_change(|e| match e {
+        TreeEvent::TreeUpdated(tree) => {
+            println!("{}", tree);
+        }
+        TreeEvent::TreePoisoned(_tree, err) => {
+            println!("Tree is poisoned: {}", err);
+        }
     });
 
     println!("Add 1 to ROOT");
@@ -28,6 +32,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Move 4 before 3");
     node4.move_before(&node3)?;
+
+    println!("Set data on 1: my_key = my_value");
+    node1.set("my_key", "my_value")?;
+
+    let val = node1.get_as::<String>("my_key")?;
+    println!("Get data from 1: my_key = {}", val);
 
     Ok(())
 }

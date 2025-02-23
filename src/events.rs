@@ -8,16 +8,19 @@ use std::{
 
 use parking_lot::RwLock;
 
-use crate::Tree;
+use crate::{Tree, TreeError};
 
 /// An event that is emitted when the tree changes.
 #[derive(Debug, Clone)]
-pub struct TreeUpdateEvent(pub Arc<Tree>);
+pub enum TreeEvent {
+    TreeUpdated(Arc<Tree>),
+    TreePoisoned(Arc<Tree>, TreeError),
+}
 
 /// An observer that can subscribe to tree update events.
 pub struct TreeObserver {
     next_id: AtomicUsize,
-    listeners: RwLock<HashMap<usize, Box<dyn Fn(&TreeUpdateEvent) + Send + Sync>>>,
+    listeners: RwLock<HashMap<usize, Box<dyn Fn(&TreeEvent) + Send + Sync>>>,
 }
 
 /// A subscription to a tree update event.
@@ -43,7 +46,7 @@ impl TreeObserver {
 
     pub fn subscribe(
         self: &Arc<Self>,
-        callback: impl Fn(&TreeUpdateEvent) + Send + Sync + 'static,
+        callback: impl Fn(&TreeEvent) + Send + Sync + 'static,
     ) -> Subscription {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.listeners.write().insert(id, Box::new(callback));
@@ -54,7 +57,7 @@ impl TreeObserver {
         }
     }
 
-    pub fn notify(&self, event: &TreeUpdateEvent) {
+    pub fn notify(&self, event: &TreeEvent) {
         let listeners = self.listeners.read();
         for callback in listeners.values() {
             callback(event);

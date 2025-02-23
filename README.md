@@ -5,6 +5,10 @@
 
 A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/). Changes among clients are guaranteed to converge to a consistent state, and the tree ensures that conflicts and cycles are handled correctly.
 
+Each node in the tree has an ID. The root node is always `NodeId::Root`; user-created nodes have IDs of the form `NodeId::Id(String)`. Nodes can be accessed by their ID using the [`Tree::get_node`] method.
+
+Each node can also store and retrieve arbitrary data associated with that node. See the [`Node::set`] and [`Node::get`]/[`Node::get_as`] methods for more information.
+
 ## Installation
 
 ```bash
@@ -13,31 +17,42 @@ cargo add yrs_tree
 
 ## Documentation
 
-* [Documentation Home](https://docs.rs/yrs_tree/)
+You can [find the complete documentation on Docs.rs](https://docs.rs/yrs_tree/).
+
+Quick links:
+
 * [`Tree` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/struct.Tree.html)
+* [`Node` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/struct.Node.html)
+* [`NodeApi` Trait Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/trait.NodeApi.html)
 
-## Examples
+## Tree Poisoning
 
-### Basic
+When the underlying Yrs document is updated, the tree automatically updates its state in response. If the library detects that the Yrs document is malformed in a way that cannot be reconciled, it will mark the tree as "poisoned."
 
-<details>
+When a tree is poisoned, any operations on the tree that rely on the Yrs document will fail with a `TreePoisoned` error. Operations that only rely on the tree's cached state will continue to succeed, but will not reflect the latest state of the Yrs document.
 
-<summary>Show code</summary>
+## Example
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yrs_tree::{Tree, TreeUpdateEvent, NodeApi};
+use yrs_tree::{Tree, TreeEvent, NodeApi};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Yjs document and tree
     let doc = Arc::new(yrs::Doc::new());
-    let tree = Tree::new(doc.clone(), "test");
+    let tree = Tree::new(doc.clone(), "test")?;
 
     // Subscribe to tree changes
     let sub = tree.on_change(|e| {
-        let TreeUpdateEvent(tree) = e;
-        // Print a textual representation of the tree
-        println!("{}", tree);
+        match e {
+            TreeEvent::TreeUpdated(tree) => {
+                // Print a textual representation of the tree
+                println!("{}", tree);
+            }
+            TreeEvent::TreePoisoned(_tree, err) => {
+                println!("Tree was poisoned! {}", err);
+            }
+        }
     });
 
     // Create and manipulate nodes
@@ -47,9 +62,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     let node4 = node2.create_child_with_id("4")?;
 
     // Move nodes around
-    node3.move_to(&node2, Some(0))?;     // Move node3 as first child of node2
-    node1.move_after(&node2)?;           // Move node1 after node2
-    node4.move_before(&node3)?;          // Move node4 before node3
+    node3.move_to(&node2, Some(0))?; // Move node3 to be first child of node2
+    node1.move_after(&node2)?;       // Move node1 to be after node2
+    node4.move_before(&node3)?;      // Move node4 to be before node3
+
+    // Store data on a node
+    node1.set("my_key", "my_value")?;
+    // Get data from a node
+    let val = node1.get_as::<String>("my_key")?;
+    assert_eq!(val.as_str(), "my_value");
 
     // Iterate over the tree in depth-first order
     let nodes = tree
@@ -69,43 +90,4 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-</details>
-
-### Synchronization Between Clients
-
-<details>
-
-<summary>Show code</summary>
-
-```rust
-use std::{error::Error, sync::Arc};
-use yrs_tree::{NodeApi, Tree};
-use yrs::{updates::decoder::Decode, ReadTxn, Transact, Update};
-
-fn main() -> Result<(), Box<dyn Error>> {
-    // Create two Yjs documents and trees
-    let doc1 = Arc::new(yrs::Doc::new());
-    let doc2 = Arc::new(yrs::Doc::new());
-    
-    let tree1 = Tree::new(doc1.clone(), "test");
-    let tree2 = Tree::new(doc2.clone(), "test");
-
-    // Make changes to tree1
-    let node1 = tree1.create_child_with_id("1")?;
-    let node2 = tree1.create_child_with_id("2")?;
-    
-    // Sync changes to tree2
-    let txn = doc1.transact();
-    let update = txn.encode_state_as_update_v1(&Default::default());
-    drop(txn);
-
-    doc2.transact_mut()
-        .apply_update(Update::decode_v1(&update).unwrap())?;
-
-    assert_eq!(tree1, tree2);
-
-    Ok(())
-}
-```
-
-</details>
+See the [examples folder in the repository](https://github.com/BinaryMuse/yrs_tree/tree/main/examples) for more.

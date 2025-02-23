@@ -3,10 +3,12 @@ use std::fmt;
 use std::sync::Arc;
 
 use uuid::Uuid;
+use yrs::block::Prelim;
 
 use crate::{Tree, TreeError};
 
-/// The ID of a node in a tree.
+/// The ID of a node in a tree. Strings can be made into `NodeId`s using the `into()` method,
+/// and `NodeId`s can be converted back into strings using the `to_string()` method.
 ///
 /// Note that `Into<NodeId>` for the string `"<ROOT>"` will return `NodeId::Root`,
 /// which cannot be used as a node ID as it is reserved for the actual root node of the tree.
@@ -63,19 +65,19 @@ pub trait NodeApi {
     /// Returns the ID of the node.
     fn id(self: &Arc<Self>) -> &NodeId;
 
-    /// Creates a new child node.
+    /// Creates a new child node with a generated ID.
     fn create_child(self: &Arc<Self>) -> Result<Arc<Node>, Box<dyn Error>>;
 
-    /// Creates a new child node at the given index.
+    /// Creates a new child node with a generated ID at the given index in the parent's children.
     fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>, Box<dyn Error>>;
 
-    /// Creates a new child node with the given ID.
+    /// Creates a new child node with the given ID at the end of the parent's children.
     fn create_child_with_id(
         self: &Arc<Self>,
         id: impl Into<NodeId>,
     ) -> Result<Arc<Node>, Box<dyn Error>>;
 
-    /// Creates a new child node with the given ID at the given index.
+    /// Creates a new child node with the given ID at the given index in the parent's children.
     fn create_child_with_id_at(
         self: &Arc<Self>,
         id: impl Into<NodeId>,
@@ -178,7 +180,6 @@ pub trait NodeApi {
 ///
 /// * See [`Tree`] for methods to create and find nodes in the tree.
 /// * See [`NodeApi`] for the operations that can be performed on a node.
-#[derive(Clone)]
 pub struct Node {
     id: NodeId,
     tree: Arc<Tree>,
@@ -231,6 +232,91 @@ impl Node {
             .update_node(&self.id, &new_parent.id, Some(new_index))?;
 
         Ok(())
+    }
+
+    /// Sets a value on the node at the given key.
+    ///
+    /// See the "Implementors" section of the [`yrs::block::Prelim`] trait for more
+    /// information on the values that can be stored.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use std::sync::Arc;
+    /// # use yrs_tree::{Node, Tree, NodeApi};
+    /// # use yrs::Doc;
+    /// #
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let doc = Arc::new(Doc::new());
+    /// # let tree = Tree::new(doc, "directory_structure")?;
+    /// let node = tree.create_child()?;
+    /// node.set("folder", "New Folder")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set<V: Prelim + Into<yrs::Any>>(
+        &self,
+        key: &str,
+        value: V,
+    ) -> Result<V::Return, Box<dyn Error>> {
+        self.tree.set_data(&self.id, key, value)
+    }
+
+    /// Gets a previously set value on the node at the given key.
+    ///
+    /// See [`yrs::Out`] for more information on the types of values that can be returned.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use std::sync::Arc;
+    /// # use yrs_tree::{Node, Tree, NodeApi};
+    /// # use yrs::{Doc, Transact};
+    /// # use yrs::types::GetString;
+    /// #
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let doc = Arc::new(Doc::new());
+    /// # let tree = Tree::new(doc.clone(), "directory_structure")?;
+    /// let node = tree.create_child()?;
+    /// node.set("folder", "New Folder")?;
+    /// # let txn = doc.transact();
+    /// let Some(yrs::Out::Any(yrs::Any::String(folder))) = node.get("folder")? else {
+    ///     panic!("folder is not a string");
+    /// };
+    /// assert_eq!(*folder, *"New Folder");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get(&self, key: &str) -> Result<Option<yrs::Out>, Box<dyn Error>> {
+        self.tree.get_data(&self.id, key)
+    }
+
+    /// Gets a previously set value on the node at the given key, cast to a specific type.
+    /// If no value was found, [`yrs::Any::Null`] will be substituted for the value and
+    /// deserialized into the given type instead (e.g. into an `Option`).
+    ///
+    /// See [`yrs::types::map::Map::get_as`] for more information.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use std::sync::Arc;
+    /// # use yrs_tree::{Node, Tree, NodeApi};
+    /// # use yrs::Doc;
+    /// # use yrs::types::GetString;
+    /// #
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let doc = Arc::new(Doc::new());
+    /// # let tree = Tree::new(doc, "directory_structure")?;
+    /// let node = tree.create_child()?;
+    /// node.set("folder", "New Folder")?;
+    /// let folder = node.get_as::<String>("folder")?;
+    /// assert_eq!(folder.as_str(), "New Folder");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_as<V: serde::de::DeserializeOwned>(&self, key: &str) -> Result<V, Box<dyn Error>> {
+        self.tree.get_data_as(&self.id, key)
     }
 }
 

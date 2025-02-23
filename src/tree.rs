@@ -6,10 +6,10 @@ use std::{
 };
 
 use parking_lot::{ReentrantMutex, RwLock};
-use yrs::{DeepObservable, MapRef, Transact};
+use yrs::{block::Prelim, DeepObservable, MapRef, Transact};
 
 use crate::{
-    events::TreeUpdateEvent,
+    events::TreeEvent,
     node::{Node, NodeId},
     tree_structure::TreeStructure,
     Subscription, TreeError, TreeObserver,
@@ -21,6 +21,19 @@ pub use crate::node::NodeApi;
 ///
 /// `Tree` implements [`NodeApi`], forwarding the calls to the root node of the tree,
 /// allowing you to add nodes to the root node without calling `root()`.
+///
+/// ## Tree Poisoning
+///
+/// When the underlying Yrs document is updated, the tree automatically updates its
+/// state in response. If the library detects that the Yrs document is malformed in a way
+/// that cannot be reconciled, it will mark the tree as "poisoned."
+///
+/// Once a tree is poisoned, any operations on the tree that rely on the Yrs document will
+/// fail with a `TreePoisoned` error. Operations that only rely on the tree's cached state
+/// will continue to succeed, but will not reflect the latest state of the Yrs document.
+///
+/// You can receive a notification when a tree is poisoned by subscribing to the tree's
+/// events via [`Tree::on_change`].
 #[derive(Clone)]
 pub struct Tree {
     structure: Arc<ReentrantMutex<RefCell<TreeStructure>>>,
@@ -30,13 +43,14 @@ pub struct Tree {
     #[allow(dead_code)] // cancels subscription when dropped
     subscription: RefCell<Option<yrs::Subscription>>,
     yjs_observer_disabled: Cell<bool>,
+    poisioned: RefCell<Option<String>>,
 }
 
 impl Tree {
     /// Creates a new tree in the Yjs doc with the given container name.
     /// The tree will take over the map at the given name in the Yrs doc, and it should not
     /// be modified manually after creation.
-    pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Arc<Self> {
+    pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Result<Arc<Self>, Box<dyn Error>> {
         let yjs_map = Arc::new(RwLock::new(doc.get_or_insert_map(tree_name)));
         let structure = Arc::new(ReentrantMutex::new(RefCell::new(TreeStructure::new())));
         let observer = Arc::new(TreeObserver::new());
@@ -44,7 +58,7 @@ impl Tree {
         {
             let txn = doc.transact_mut_with("yrs_tree");
             let map = yjs_map.read();
-            structure.lock().borrow_mut().init_from_yjs(&map, &txn);
+            structure.lock().borrow_mut().init_from_yjs(&map, &txn)?;
         }
 
         let structure_clone = structure.clone();
@@ -58,6 +72,7 @@ impl Tree {
             observer,
             subscription: RefCell::new(None),
             yjs_observer_disabled: Cell::new(false),
+            poisioned: RefCell::new(None),
         });
 
         let tree_clone = tree.clone();
@@ -71,25 +86,49 @@ impl Tree {
             }
 
             let check_origin = yrs::Origin::from("yrs_tree");
+            let data_origin = yrs::Origin::from("yrs_tree_data");
+
+            if txn.origin() == Some(&data_origin) {
+                return;
+            }
+
             let lock = structure_clone.lock();
             let mut structure = lock.borrow_mut();
 
-            if txn.origin() == Some(&check_origin) {
+            let update_result = if txn.origin() == Some(&check_origin) {
                 // TODO: handle same origin updates as individual operations
-                structure.apply_yjs_update(yjs_map_clone.clone(), txn);
+                structure.apply_yjs_update(yjs_map_clone.clone(), txn)
             } else {
                 // TODO: determine if we can split this into individual operations
                 // If not, reinitialize from the Yjs map
-                structure.apply_yjs_update(yjs_map_clone.clone(), txn);
-            }
+                structure.apply_yjs_update(yjs_map_clone.clone(), txn)
+            };
 
             drop(structure);
-            observer_clone.notify(&TreeUpdateEvent(tree_clone.clone()));
+
+            match update_result {
+                Ok(_) => observer_clone.notify(&TreeEvent::TreeUpdated(tree_clone.clone())),
+                Err(e) => {
+                    tree_clone.mark_poisoned(e.to_string());
+                }
+            }
         });
 
         tree.subscription.replace(Some(subscription));
 
-        tree
+        Ok(tree)
+    }
+
+    fn mark_poisoned(self: &Arc<Self>, msg: String) {
+        self.poisioned.borrow_mut().replace(msg.clone());
+        self.observer.notify(&TreeEvent::TreePoisoned(
+            self.clone(),
+            TreeError::TreePoisoned(msg),
+        ))
+    }
+
+    pub fn is_poisoned(&self) -> bool {
+        self.poisioned.borrow().is_some()
     }
 
     pub(crate) fn get_children(&self, id: &NodeId) -> Vec<NodeId> {
@@ -107,14 +146,27 @@ impl Tree {
         parent: &NodeId,
         index: Option<usize>,
     ) -> Result<(), Box<dyn Error>> {
+        if let Some(poisioned) = self.poisioned.borrow().as_ref() {
+            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+        }
+
         let lock = self.structure.lock();
         let mut structure = lock.borrow_mut();
 
-        if structure.has_pending_edge_map_updates() {
+        let res = if structure.has_pending_edge_map_updates() {
             let mut txn = self.doc.transact_mut_with("yrs_tree");
             let map = self.yjs_map.write();
             self.yjs_observer_disabled.set(true);
-            structure.apply_pending_edge_map_updates(&map, &mut txn);
+            structure.apply_pending_edge_map_updates(&map, &mut txn)
+        } else {
+            Ok(())
+        };
+
+        if let Err(e) = res {
+            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
+                self.mark_poisoned(err.to_string());
+                return Err(e);
+            }
         }
 
         let mut txn = self.doc.transact_mut_with("yrs_tree");
@@ -161,12 +213,86 @@ impl Tree {
         }
     }
 
-    /// Returns a subscription to the tree. When dropped, the subscription is
-    /// automatically cancelled.
-    pub fn on_change(
-        &self,
-        callback: impl Fn(&TreeUpdateEvent) + Send + Sync + 'static,
-    ) -> Subscription {
+    pub(crate) fn set_data<V: Prelim + Into<yrs::Any>>(
+        self: &Arc<Self>,
+        id: &NodeId,
+        key: &str,
+        value: V,
+    ) -> Result<V::Return, Box<dyn Error>> {
+        if let Some(poisioned) = self.poisioned.borrow().as_ref() {
+            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+        }
+
+        let mut txn = self.doc.transact_mut_with("yrs_tree_data");
+        let map = self.yjs_map.write();
+        let result = self
+            .structure
+            .lock()
+            .borrow_mut()
+            .set_data(id, key, value, &map, &mut txn);
+
+        if let Err(e) = &result {
+            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
+                self.mark_poisoned(err.to_string());
+                return result;
+            }
+        }
+
+        result
+    }
+
+    pub(crate) fn get_data(
+        self: &Arc<Self>,
+        id: &NodeId,
+        key: &str,
+    ) -> Result<Option<yrs::Out>, Box<dyn Error>> {
+        if let Some(poisioned) = self.poisioned.borrow().as_ref() {
+            return Err(TreeError::TreePoisoned(poisioned.clone()).into());
+        }
+
+        let mut txn = self.doc.transact();
+        let map = self.yjs_map.read();
+        let result = self
+            .structure
+            .lock()
+            .borrow()
+            .get_data(id, key, &map, &mut txn);
+
+        if let Err(e) = &result {
+            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
+                self.mark_poisoned(err.to_string());
+                return result;
+            }
+        }
+
+        result
+    }
+
+    pub(crate) fn get_data_as<V: serde::de::DeserializeOwned>(
+        self: &Arc<Self>,
+        id: &NodeId,
+        key: &str,
+    ) -> Result<V, Box<dyn Error>> {
+        let result = self.structure.lock().borrow().get_data_as(
+            id,
+            key,
+            &self.yjs_map.read(),
+            &mut self.doc.transact(),
+        );
+
+        if let Err(e) = &result {
+            if let Some(TreeError::TreePoisoned(err)) = e.downcast_ref::<TreeError>() {
+                self.mark_poisoned(err.to_string());
+                return result;
+            }
+        }
+
+        result
+    }
+
+    /// Returns a subscription to the tree's events. When dropped, the subscription
+    /// is automatically cancelled.
+    pub fn on_change(&self, callback: impl Fn(&TreeEvent) + Send + Sync + 'static) -> Subscription {
         self.observer.subscribe(callback)
     }
 
@@ -384,14 +510,15 @@ impl Iterator for DfsIter {
 mod tests {
     use std::error::Error;
 
-    use yrs::{updates::decoder::Decode, ReadTxn, Transact, Update};
+    use parking_lot::Mutex;
+    use yrs::{updates::decoder::Decode, Map, ReadTxn, Transact, Update};
 
     use super::*;
 
     #[test]
     fn it_works() -> Result<(), Box<dyn Error>> {
         let doc = yrs::Doc::new();
-        let tree = Tree::new(Arc::new(doc), "test");
+        let tree = Tree::new(Arc::new(doc), "test")?;
         let root = tree.root();
         // let _sub = tree.on_change(|e| {
         //     let TreeUpdateEvent(tree) = e;
@@ -427,12 +554,11 @@ mod tests {
         let doc1 = Arc::new(yrs::Doc::new());
         let doc2 = Arc::new(yrs::Doc::new());
 
-        let tree1 = Tree::new(doc1.clone(), "test");
-        let root1 = tree1.root();
-        let tree2 = Tree::new(doc2.clone(), "test");
+        let tree1 = Tree::new(doc1.clone(), "test")?;
+        let tree2 = Tree::new(doc2.clone(), "test")?;
 
-        let node1 = root1.create_child_with_id("1")?;
-        let node2 = root1.create_child_with_id("2")?;
+        let node1 = tree1.create_child_with_id("1")?;
+        let node2 = tree1.create_child_with_id("2")?;
         let node3 = node1.create_child_with_id("3")?;
         let node4 = node2.create_child_with_id("4")?;
         node3.move_to(&node2, Some(0))?;
@@ -442,8 +568,6 @@ mod tests {
         let txn = doc1.transact();
         let update = txn.encode_state_as_update_v1(&Default::default());
         drop(txn);
-
-        println!("applying update: {} bytes", update.len());
 
         doc2.transact_mut()
             .apply_update(Update::decode_v1(&update).unwrap())?;
@@ -458,8 +582,8 @@ mod tests {
         let doc1 = Arc::new(yrs::Doc::new());
         let doc2 = Arc::new(yrs::Doc::new());
 
-        let tree1 = Tree::new(doc1.clone(), "test");
-        let tree2 = Tree::new(doc2.clone(), "test");
+        let tree1 = Tree::new(doc1.clone(), "test")?;
+        let tree2 = Tree::new(doc2.clone(), "test")?;
 
         let node_c1 = tree1.create_child_with_id("C")?;
         let node_d1 = tree1.create_child_with_id("D")?;
@@ -497,10 +621,43 @@ mod tests {
     #[test]
     fn errors_creating_root() -> Result<(), Box<dyn Error>> {
         let doc = Arc::new(yrs::Doc::new());
-        let tree = Tree::new(doc, "test");
+        let tree = Tree::new(doc, "test")?;
 
         let res = tree.create_child_with_id("<ROOT>");
         assert!(res.is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn handles_poisioning() -> Result<(), Box<dyn Error>> {
+        let doc = Arc::new(yrs::Doc::new());
+        let tree = Tree::new(doc.clone(), "test")?;
+        let poisoned = Arc::new(Mutex::new(false));
+        let poisoned_clone = poisoned.clone();
+        let _sub = tree.on_change(move |e| {
+            if let TreeEvent::TreePoisoned(_, _) = e {
+                *poisoned_clone.lock() = true;
+            }
+        });
+
+        let node = tree.create_child_with_id("1")?;
+        node.set("test", "test")?;
+
+        let map = doc.get_or_insert_map("test");
+        let mut txn = doc.transact_mut();
+        let Some(yrs::Out::YMap(map_ref)) = map.get(&txn, node.id().to_string().as_str()) else {
+            panic!("Map not found");
+        };
+
+        // Change the data map to poison the tree
+        map_ref.insert(&mut txn, "data", "asdfasdf");
+        drop(txn);
+
+        let _data = node.get("test");
+
+        assert_eq!(tree.is_poisoned(), true);
+        assert_eq!(*poisoned.lock(), true);
 
         Ok(())
     }

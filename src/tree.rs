@@ -132,6 +132,11 @@ impl Tree {
         self.poisioned.borrow().is_some()
     }
 
+    /// Returns the reason the tree is poisoned, if it is poisoned.
+    pub fn get_poisoned_reason(&self) -> Option<TreeError> {
+        self.poisioned.borrow().as_ref().map(|e| e.clone())
+    }
+
     pub(crate) fn get_children(&self, id: &NodeId) -> Vec<NodeId> {
         self.structure
             .lock()

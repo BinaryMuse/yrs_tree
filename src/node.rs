@@ -8,7 +8,7 @@ use crate::{Tree, TreeError};
 
 /// The ID of a node in a tree.
 ///
-/// Note that `Into<NodeId>` for the string `"<ROOT>" will return `NodeId::Root`,
+/// Note that `Into<NodeId>` for the string `"<ROOT>"` will return `NodeId::Root`,
 /// which cannot be used as a node ID as it is reserved for the actual root node of the tree.
 #[derive(Clone, Debug, Default, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum NodeId {

@@ -1,5 +1,8 @@
 # yrs_tree
 
+[![yrs_tree](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FBinaryMuse%2Fyrs_tree%2Frefs%2Fheads%2Fmain%2FCargo.toml&query=%24.package.version&prefix=v&label=yrs_tree)](https://crates.io/crates/yrs_tree)
+[![docs.rs](https://img.shields.io/docsrs/yrs_tree)](https://docs.rs/yrs_tree)
+
 A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/). Changes among clients are guaranteed to converge to a consistent state, and the tree ensures that conflicts and cycles are handled correctly.
 
 ## Installation
@@ -8,11 +11,18 @@ A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm descri
 cargo add yrs_tree
 ```
 
-## Usage
+## Documentation
 
-[Documentation](https://docs.rs/yrs_tree/)
+* [Documentation Home](https://docs.rs/yrs_tree/)
+* [`Tree` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/struct.Tree.html)
 
-### Basic Example
+## Examples
+
+### Basic
+
+<details>
+
+<summary>Show code</summary>
 
 ```rust
 use std::{error::Error, sync::Arc};
@@ -59,7 +69,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
+</details>
+
 ### Synchronization Between Clients
+
+<details>
+
+<summary>Show code</summary>
 
 ```rust
 use std::{error::Error, sync::Arc};
@@ -92,6 +108,4 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+</details>

@@ -127,6 +127,7 @@ impl Tree {
         ))
     }
 
+    /// Returns true if the tree is poisoned.
     pub fn is_poisoned(&self) -> bool {
         self.poisioned.borrow().is_some()
     }

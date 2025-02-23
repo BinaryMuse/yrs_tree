@@ -9,10 +9,18 @@ use parking_lot::{ReentrantMutex, RwLock};
 use yrs::{DeepObservable, MapRef, Transact};
 
 use crate::{
-    events::TreeUpdateEvent, node::Node, tree_structure::TreeStructure, Subscription, TreeObserver,
+    events::TreeUpdateEvent,
+    node::{Node, NodeId},
+    tree_structure::TreeStructure,
+    Subscription, TreeError, TreeObserver,
 };
 
+pub use crate::node::NodeApi;
+
 /// A tree CRDT backed by a Yrs document.
+///
+/// `Tree` implements [`NodeApi`], forwarding the calls to the root node of the tree,
+/// allowing you to add nodes to the root node without calling `root()`.
 #[derive(Clone)]
 pub struct Tree {
     structure: Arc<ReentrantMutex<RefCell<TreeStructure>>>,
@@ -24,10 +32,10 @@ pub struct Tree {
     yjs_observer_disabled: Cell<bool>,
 }
 
-/// Creates a new tree in the Yjs doc with the given container name.
-/// The tree will take over the map at the given name, and it should not
-/// be modified manually after creation.
 impl Tree {
+    /// Creates a new tree in the Yjs doc with the given container name.
+    /// The tree will take over the map at the given name in the Yrs doc, and it should not
+    /// be modified manually after creation.
     pub fn new(doc: Arc<yrs::Doc>, tree_name: &str) -> Arc<Self> {
         let yjs_map = Arc::new(RwLock::new(doc.get_or_insert_map(tree_name)));
         let structure = Arc::new(ReentrantMutex::new(RefCell::new(TreeStructure::new())));
@@ -84,7 +92,7 @@ impl Tree {
         tree
     }
 
-    pub(crate) fn get_children(&self, id: &str) -> Vec<String> {
+    pub(crate) fn get_children(&self, id: &NodeId) -> Vec<NodeId> {
         self.structure
             .lock()
             .borrow()
@@ -95,8 +103,8 @@ impl Tree {
 
     pub(crate) fn update_node(
         self: &Arc<Self>,
-        id: &str,
-        parent: &str,
+        id: &NodeId,
+        parent: &NodeId,
         index: Option<usize>,
     ) -> Result<(), Box<dyn Error>> {
         let lock = self.structure.lock();
@@ -117,32 +125,40 @@ impl Tree {
         ret
     }
 
-    pub(crate) fn get_parent(&self, id: &str) -> Option<String> {
-        self.structure
-            .lock()
-            .borrow()
-            .get_parent(id)
-            .map(|s| s.to_string())
+    pub(crate) fn get_parent(&self, id: &NodeId) -> Option<NodeId> {
+        match id {
+            NodeId::Root => None,
+            NodeId::Id(_) => self.structure.lock().borrow().get_parent(id).cloned(),
+        }
     }
 
     /// Returns the root node of the tree.
     pub fn root(self: &Arc<Self>) -> Arc<Node> {
-        Node::new("__ROOT__", self.clone())
+        Node::new(NodeId::Root, self.clone())
     }
 
-    /// Returns true if the tree has a node with the given id.
-    pub fn has_node(self: &Arc<Self>, id: &str) -> bool {
-        self.structure.lock().borrow().nodes.contains_key(id)
+    /// Returns true if the tree has a node with the given ID.
+    pub fn has_node(self: &Arc<Self>, id: impl Into<NodeId>) -> bool {
+        let id = id.into();
+        match &id {
+            NodeId::Root => true,
+            NodeId::Id(_) => self.structure.lock().borrow().nodes.contains_key(&id),
+        }
     }
 
-    /// Returns the node with the given id.
-    pub fn get_node(self: &Arc<Self>, id: &str) -> Option<Arc<Node>> {
-        self.structure
-            .lock()
-            .borrow()
-            .nodes
-            .get(id)
-            .map(|node| Node::new(&node.id, self.clone()))
+    /// Returns the node with the given ID.
+    pub fn get_node(self: &Arc<Self>, id: impl Into<NodeId>) -> Option<Arc<Node>> {
+        let id = id.into();
+        match &id {
+            NodeId::Root => Some(self.root()),
+            NodeId::Id(_) => self
+                .structure
+                .lock()
+                .borrow()
+                .nodes
+                .get(&id)
+                .map(|node| Node::new(node.id.clone(), self.clone())),
+        }
     }
 
     /// Returns a subscription to the tree. When dropped, the subscription is
@@ -155,9 +171,84 @@ impl Tree {
     }
 
     /// Returns an iterator over the nodes in the tree in depth-first order.
+    ///
+    /// The iterator is a snapshot of the tree at the time of the call, and
+    /// will not reflect changes to the tree while the iterator is in use.
     pub fn traverse_dfs(self: &Arc<Self>) -> DfsIter {
         let structure = self.structure.lock().borrow().clone();
         DfsIter::new(structure, self.clone())
+    }
+}
+
+/// `Tree` implements [`NodeApi`], forwarding the calls to the root node of the tree
+impl NodeApi for Tree {
+    #[inline]
+    fn id(self: &Arc<Self>) -> &NodeId {
+        &NodeId::Root
+    }
+
+    #[inline]
+    fn create_child(self: &Arc<Self>) -> Result<Arc<Node>, Box<dyn Error>> {
+        self.root().create_child()
+    }
+
+    #[inline]
+    fn create_child_at(self: &Arc<Self>, index: usize) -> Result<Arc<Node>, Box<dyn Error>> {
+        self.root().create_child_at(index)
+    }
+
+    #[inline]
+    fn create_child_with_id(
+        self: &Arc<Self>,
+        id: impl Into<NodeId>,
+    ) -> Result<Arc<Node>, Box<dyn Error>> {
+        self.root().create_child_with_id(id)
+    }
+
+    #[inline]
+    fn create_child_with_id_at(
+        self: &Arc<Self>,
+        id: impl Into<NodeId>,
+        index: usize,
+    ) -> Result<Arc<Node>, Box<dyn Error>> {
+        self.root().create_child_with_id_at(id, index)
+    }
+
+    #[inline]
+    fn move_to(
+        self: &Arc<Self>,
+        _parent: &Node,
+        _index: Option<usize>,
+    ) -> Result<(), Box<dyn Error>> {
+        Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
+    }
+
+    #[inline]
+    fn move_before(self: &Arc<Self>, _other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+        Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
+    }
+
+    #[inline]
+    fn move_after(self: &Arc<Self>, _other: &Arc<Node>) -> Result<(), Box<dyn Error>> {
+        Err(TreeError::UnsupportedOperation("Cannot move the root node".to_string()).into())
+    }
+
+    #[inline]
+    fn children(self: &Arc<Self>) -> Vec<Arc<Node>> {
+        self.root().children()
+    }
+
+    #[inline]
+    fn parent(self: &Arc<Self>) -> Option<Arc<Node>> {
+        None
+    }
+
+    fn siblings(self: &Arc<Self>) -> Vec<Arc<Node>> {
+        vec![]
+    }
+
+    fn depth(self: &Arc<Self>) -> usize {
+        0
     }
 }
 
@@ -191,7 +282,7 @@ impl fmt::Display for Tree {
             }
 
             // Update is_last status for current depth
-            let parent = if node.id() == "__ROOT__" {
+            let parent = if node.id() == &NodeId::Root {
                 None
             } else {
                 self.get_parent(node.id())
@@ -199,7 +290,7 @@ impl fmt::Display for Tree {
 
             if let Some(parent_id) = parent {
                 let siblings = self.get_children(&parent_id);
-                is_last_at_depth[depth] = siblings.last().map(|s| s.as_str()) == Some(node.id());
+                is_last_at_depth[depth] = siblings.last() == Some(node.id());
             }
 
             // Build the prefix
@@ -223,14 +314,18 @@ impl fmt::Display for Tree {
     }
 }
 
+/// An iterator over the nodes in the tree in depth-first order.
+///
+/// The iterator is a snapshot of the tree at the time of the call, and
+/// will not reflect changes to the tree while the iterator is in use.
 pub struct DfsIter {
     tree: Arc<Tree>,
     structure: TreeStructure,
-    last_node: Option<String>,
+    last_node: Option<NodeId>,
 }
 
 impl DfsIter {
-    pub fn new(structure: TreeStructure, tree: Arc<Tree>) -> Self {
+    pub(crate) fn new(structure: TreeStructure, tree: Arc<Tree>) -> Self {
         Self {
             tree,
             structure,
@@ -251,7 +346,7 @@ impl Iterator for DfsIter {
                 // If there are children, visit first child
                 let next_id = &children[0];
                 self.last_node = Some(next_id.clone());
-                Some(Node::new(next_id, self.tree.clone()))
+                Some(Node::new(next_id.clone(), self.tree.clone()))
             } else {
                 // No children, backtrack to find next sibling
                 let mut current = last_node.clone();
@@ -264,22 +359,22 @@ impl Iterator for DfsIter {
                         // Found next sibling
                         let next_id = &siblings[current_idx + 1];
                         self.last_node = Some(next_id.clone());
-                        return Some(Node::new(next_id, self.tree.clone()));
+                        return Some(Node::new(next_id.clone(), self.tree.clone()));
                     }
 
-                    if parent_id == "__ROOT__" {
+                    if parent_id == &NodeId::Root {
                         // Reached root while backtracking, iteration complete
                         return None;
                     }
 
                     // Continue backtracking
-                    current = parent_id.to_string();
+                    current = parent_id.clone();
                 }
             }
         } else {
             // Start at root
-            let root = Node::new("__ROOT__", self.tree.clone());
-            self.last_node = Some(root.id().to_string());
+            let root = Node::new(NodeId::Root, self.tree.clone());
+            self.last_node = Some(root.id().clone());
             Some(root)
         }
     }
@@ -318,7 +413,7 @@ mod tests {
 
         assert_eq!(
             nodes,
-            vec![("__ROOT__", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
+            vec![("<ROOT>", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
                 .iter()
                 .map(|(id, depth)| (id.to_string(), *depth as usize))
                 .collect::<Vec<_>>()
@@ -364,11 +459,10 @@ mod tests {
         let doc2 = Arc::new(yrs::Doc::new());
 
         let tree1 = Tree::new(doc1.clone(), "test");
-        let root1 = tree1.root();
         let tree2 = Tree::new(doc2.clone(), "test");
 
-        let node_c1 = root1.create_child_with_id("C")?;
-        let node_d1 = root1.create_child_with_id("D")?;
+        let node_c1 = tree1.create_child_with_id("C")?;
+        let node_d1 = tree1.create_child_with_id("D")?;
         let node_a1 = node_c1.create_child_with_id("A")?;
         let node_b1 = node_c1.create_child_with_id("B")?;
 
@@ -395,7 +489,18 @@ mod tests {
             .map(|n| n.id().to_string())
             .collect::<Vec<_>>();
 
-        assert_eq!(nodes, vec!["__ROOT__", "C", "A", "D", "B"]);
+        assert_eq!(nodes, vec!["<ROOT>", "C", "A", "D", "B"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn errors_creating_root() -> Result<(), Box<dyn Error>> {
+        let doc = Arc::new(yrs::Doc::new());
+        let tree = Tree::new(doc, "test");
+
+        let res = tree.create_child_with_id("<ROOT>");
+        assert!(res.is_err());
 
         Ok(())
     }

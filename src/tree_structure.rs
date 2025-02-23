@@ -9,14 +9,12 @@ use fractional_index::FractionalIndex;
 use parking_lot::RwLock;
 use yrs::{Map, MapPrelim, MapRef, Out};
 
+use crate::node::NodeId;
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EdgeMap(HashMap<String, i64>);
 
 impl EdgeMap {
-    pub fn from_map(map: HashMap<String, i64>) -> Self {
-        Self(map)
-    }
-
     pub fn max_edge(&self) -> Option<(String, i64)> {
         self.iter()
             .max_by(|(_, a), (_, b)| a.cmp(b))
@@ -67,24 +65,24 @@ impl From<HashMap<String, i64>> for EdgeMap {
 }
 
 pub struct NodeContainer {
-    pub id: String,
+    pub id: NodeId,
     pub edge_map: EdgeMap,
     pub fi: FractionalIndex,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TreeNode {
-    pub id: String,
-    pub parent_id: Option<String>,
-    pub children: Vec<String>,
+    pub id: NodeId,
+    pub parent_id: Option<NodeId>,
+    pub children: Vec<NodeId>,
     pub fi: FractionalIndex,
     pub edge_map: EdgeMap,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TreeStructure {
-    pub nodes: HashMap<String, TreeNode>,
-    pending_edge_map_updates: Vec<(String, String, i64)>,
+    pub nodes: HashMap<NodeId, TreeNode>,
+    pending_edge_map_updates: Vec<(NodeId, NodeId, i64)>,
 }
 
 impl TreeStructure {
@@ -95,15 +93,15 @@ impl TreeStructure {
         }
     }
 
-    pub fn get_children(&self, id: &str) -> Option<&[String]> {
+    pub fn get_children(&self, id: &NodeId) -> Option<&[NodeId]> {
         self.nodes.get(id).map(|node| node.children.as_slice())
     }
 
-    pub fn get_parent(&self, id: &str) -> Option<&str> {
-        self.nodes.get(id)?.parent_id.as_deref()
+    pub fn get_parent(&self, id: &NodeId) -> Option<&NodeId> {
+        self.nodes.get(id).and_then(|node| node.parent_id.as_ref())
     }
 
-    pub(crate) fn get_node(&self, id: &str) -> Option<&TreeNode> {
+    pub(crate) fn get_node(&self, id: &NodeId) -> Option<&TreeNode> {
         self.nodes.get(id)
     }
 
@@ -132,7 +130,7 @@ impl TreeStructure {
                 let fi_str: String = container.get_as(txn, "fi").unwrap_or_default();
                 let fi = FractionalIndex::from_string(&fi_str).unwrap_or_default();
                 containers.push(NodeContainer {
-                    id: id.to_string(),
+                    id: id.into(),
                     edge_map: edge_map.into(),
                     fi,
                 });
@@ -143,13 +141,13 @@ impl TreeStructure {
 
     fn create_initial_nodes(&mut self, containers: &[NodeContainer]) {
         let root = TreeNode {
-            id: "__ROOT__".to_string(),
+            id: NodeId::Root,
             parent_id: None,
             children: vec![],
             fi: FractionalIndex::default(),
             edge_map: EdgeMap::default(),
         };
-        self.nodes.insert("__ROOT__".to_string(), root);
+        self.nodes.insert(NodeId::Root, root);
 
         for container in containers {
             let id = &container.id;
@@ -168,14 +166,18 @@ impl TreeStructure {
     fn process_parent_relationships(
         &mut self,
         containers: &Vec<NodeContainer>,
-    ) -> BTreeSet<String> {
+    ) -> BTreeSet<NodeId> {
         let nodes_to_process = containers;
 
         for node in nodes_to_process {
             let parent_id = node.edge_map.max_edge().map(|(id, _)| id);
             if let Some(parent_id) = parent_id {
                 let node = self.nodes.get_mut(&node.id).unwrap();
-                node.parent_id = Some(parent_id.clone());
+                let parent_id: NodeId = match parent_id.as_str() {
+                    "<ROOT>" => NodeId::Root,
+                    _ => parent_id.into(),
+                };
+                node.parent_id = Some(parent_id);
             } else {
                 panic!("No parent found for node: {}", node.id);
             }
@@ -183,7 +185,7 @@ impl TreeStructure {
 
         let mut non_attached_nodes = BTreeSet::new();
         for node in self.nodes.values() {
-            if !self.can_reach(&node.id, "__ROOT__") {
+            if !self.can_reach(&node.id, &NodeId::Root) {
                 non_attached_nodes.insert(node.id.clone());
             }
         }
@@ -191,12 +193,12 @@ impl TreeStructure {
         non_attached_nodes
     }
 
-    fn reattach_nodes(&mut self, mut non_attached_nodes: BTreeSet<String>) {
+    fn reattach_nodes(&mut self, mut non_attached_nodes: BTreeSet<NodeId>) {
         while !non_attached_nodes.is_empty() {
             // find the historical parent with the highest edge value
             // that is also not inside the non_attached_nodes set
             let next = non_attached_nodes.first().unwrap().clone();
-            if self.can_reach(&next, "__ROOT__") {
+            if self.can_reach(&next, &NodeId::Root) {
                 non_attached_nodes.remove(&next);
                 continue;
             }
@@ -205,13 +207,13 @@ impl TreeStructure {
             let edges_desc = &node.edge_map.edges_desc();
             let first_valid_parent = edges_desc
                 .iter()
-                .find(|(id, _)| !non_attached_nodes.contains(id));
+                .find(|(id, _)| !non_attached_nodes.contains(&id.into()));
 
             if let Some((parent_id, _)) = first_valid_parent {
-                node.parent_id = Some(parent_id.clone());
+                node.parent_id = Some(parent_id.into());
                 let (edge_id, edge_val) = node.edge_map.add_edge(parent_id);
                 self.pending_edge_map_updates
-                    .push((node.id.clone(), edge_id, edge_val));
+                    .push((node.id.clone(), edge_id.into(), edge_val));
                 non_attached_nodes.remove(&next);
             } else {
                 panic!("No valid parent found for detached node: {}", next);
@@ -252,16 +254,16 @@ impl TreeStructure {
         }
     }
 
-    fn can_reach(&self, id: &str, target: &str) -> bool {
+    fn can_reach(&self, id: &NodeId, target: &NodeId) -> bool {
         let mut tortoise = id;
-        let mut hare = match self.nodes.get(id).and_then(|n| n.parent_id.as_deref()) {
+        let mut hare = match self.nodes.get(id).and_then(|n| n.parent_id.as_ref()) {
             Some(parent) => parent,
             None => return id == target,
         };
 
         while hare != target {
             for _ in 0..2 {
-                match self.nodes.get(hare).and_then(|n| n.parent_id.as_deref()) {
+                match self.nodes.get(hare).and_then(|n| n.parent_id.as_ref()) {
                     Some(parent) => hare = parent,
                     None => return false,
                 }
@@ -273,7 +275,7 @@ impl TreeStructure {
             tortoise = self
                 .nodes
                 .get(tortoise)
-                .and_then(|n| n.parent_id.as_deref())
+                .and_then(|n| n.parent_id.as_ref())
                 .unwrap_or(tortoise);
 
             if tortoise == hare {
@@ -286,8 +288,8 @@ impl TreeStructure {
 
     pub(crate) fn update_node(
         &mut self,
-        id: &str,
-        parent: &str,
+        id: &NodeId,
+        parent: &NodeId,
         index: Option<usize>,
         map: &MapRef,
         txn: &mut yrs::TransactionMut,
@@ -326,10 +328,10 @@ impl TreeStructure {
             // since we might have updated it during the node reattachment phase
             // without updating the backing Yjs map
             let node_edge_map = &mut node.edge_map;
-            let (_, new_edge) = node_edge_map.add_edge(parent);
+            let (_, new_edge) = node_edge_map.add_edge(&parent.to_string());
             node.fi = new_fi.clone();
 
-            let Some(Out::YMap(container)) = map.get(txn, id) else {
+            let Some(Out::YMap(container)) = map.get(txn, &id.to_string()) else {
                 panic!("Node {} not found", id);
             };
 
@@ -337,14 +339,14 @@ impl TreeStructure {
                 panic!("Edge map for node {} not found", id);
             };
 
-            edge_map.insert(txn, parent, new_edge);
+            edge_map.insert(txn, parent.to_string(), new_edge);
             container.insert(txn, "fi", new_fi.to_string());
         } else {
             // No existing node; we need to create the container and the node data
-            let container = map.insert(txn, id, MapPrelim::default());
+            let container = map.insert(txn, id.to_string(), MapPrelim::default());
             let edge_map = container.insert(txn, "em", MapPrelim::default());
 
-            edge_map.insert(txn, parent, 0);
+            edge_map.insert(txn, parent.to_string(), 0);
             container.insert(txn, "fi", new_fi.to_string());
         }
 
@@ -361,13 +363,13 @@ impl TreeStructure {
         txn: &mut yrs::TransactionMut,
     ) {
         for (node_id, edge_id, edge_val) in self.pending_edge_map_updates.iter() {
-            let yrs::Out::YMap(container) = map.get(txn, node_id).unwrap() else {
+            let yrs::Out::YMap(container) = map.get(txn, &node_id.to_string()).unwrap() else {
                 panic!("Node is not a container: {}", node_id);
             };
             let yrs::Out::YMap(edge_map) = container.get(txn, "em").unwrap() else {
                 panic!("Edge map is not a container: {}", node_id);
             };
-            edge_map.insert(txn, edge_id.clone(), *edge_val);
+            edge_map.insert(txn, edge_id.to_string(), *edge_val);
         }
         self.pending_edge_map_updates.clear();
     }
@@ -405,8 +407,8 @@ mod tests {
         let fi4 = FractionalIndex::new_after(&fi3);
 
         // using fi2 first to test ordering
-        create_container(&map, &mut txn, "1", &fi2, vec![("__ROOT__".to_string(), 0)]);
-        create_container(&map, &mut txn, "2", &fi1, vec![("__ROOT__".to_string(), 1)]);
+        create_container(&map, &mut txn, "1", &fi2, vec![("<ROOT>".to_string(), 0)]);
+        create_container(&map, &mut txn, "2", &fi1, vec![("<ROOT>".to_string(), 1)]);
         create_container(&map, &mut txn, "3", &fi3, vec![("1".to_string(), 0)]);
         create_container(&map, &mut txn, "4", &fi4, vec![("2".to_string(), 0)]);
         drop(txn);
@@ -417,26 +419,26 @@ mod tests {
 
         assert_eq!(tree.nodes.len(), 5); // 4 nodes + ROOT
 
-        let root = tree.nodes.get("__ROOT__").unwrap();
+        let root = tree.nodes.get(&NodeId::Root).unwrap();
         assert_eq!(root.children, vec!["2", "1"]);
 
-        let node1 = tree.nodes.get("1").unwrap();
-        assert_eq!(node1.parent_id, Some("__ROOT__".to_string()));
+        let node1 = tree.nodes.get(&"1".into()).unwrap();
+        assert_eq!(node1.parent_id, Some(NodeId::Root));
         assert_eq!(node1.children, vec!["3"]);
         assert_eq!(node1.fi.to_string(), fi2.to_string());
 
-        let node2 = tree.nodes.get("2").unwrap();
-        assert_eq!(node2.parent_id, Some("__ROOT__".to_string()));
+        let node2 = tree.nodes.get(&"2".into()).unwrap();
+        assert_eq!(node2.parent_id, Some(NodeId::Root));
         assert_eq!(node2.children, vec!["4"]);
         assert_eq!(node2.fi.to_string(), fi1.to_string());
 
-        let node3 = tree.nodes.get("3").unwrap();
-        assert_eq!(node3.parent_id, Some("1".to_string()));
+        let node3 = tree.nodes.get(&"3".into()).unwrap();
+        assert_eq!(node3.parent_id, Some("1".into()));
         assert!(node3.children.is_empty());
         assert_eq!(node3.fi.to_string(), fi3.to_string());
 
-        let node4 = tree.nodes.get("4").unwrap();
-        assert_eq!(node4.parent_id, Some("2".to_string()));
+        let node4 = tree.nodes.get(&"4".into()).unwrap();
+        assert_eq!(node4.parent_id, Some("2".into()));
         assert!(node4.children.is_empty());
         assert_eq!(node4.fi.to_string(), fi4.to_string());
     }
@@ -453,8 +455,8 @@ mod tests {
         let fi4 = FractionalIndex::new_after(&fi3);
 
         // using fi2 first to test ordering
-        create_container(&map, &mut txn, "1", &fi2, vec![("__ROOT__".to_string(), 0)]);
-        create_container(&map, &mut txn, "2", &fi1, vec![("__ROOT__".to_string(), 1)]);
+        create_container(&map, &mut txn, "1", &fi2, vec![("<ROOT>".to_string(), 0)]);
+        create_container(&map, &mut txn, "2", &fi1, vec![("<ROOT>".to_string(), 1)]);
         create_container(
             &map,
             &mut txn,
@@ -467,7 +469,7 @@ mod tests {
             &mut txn,
             "4",
             &fi4,
-            vec![("3".to_string(), 1), ("__ROOT__".to_string(), 0)],
+            vec![("3".to_string(), 1), ("<ROOT>".to_string(), 0)],
         );
         drop(txn);
 
@@ -477,26 +479,26 @@ mod tests {
 
         assert_eq!(tree.nodes.len(), 5); // 4 nodes + ROOT
 
-        let root = tree.nodes.get("__ROOT__").unwrap();
+        let root = tree.nodes.get(&NodeId::Root).unwrap();
         assert_eq!(root.children, vec!["2", "1"]);
 
-        let node1 = tree.nodes.get("1").unwrap();
-        assert_eq!(node1.parent_id, Some("__ROOT__".to_string()));
+        let node1 = tree.nodes.get(&"1".into()).unwrap();
+        assert_eq!(node1.parent_id, Some(NodeId::Root));
         assert!(node1.children.is_empty());
         assert_eq!(node1.fi.to_string(), fi2.to_string());
 
-        let node2 = tree.nodes.get("2").unwrap();
-        assert_eq!(node2.parent_id, Some("__ROOT__".to_string()));
+        let node2 = tree.nodes.get(&"2".into()).unwrap();
+        assert_eq!(node2.parent_id, Some(NodeId::Root));
         assert_eq!(node2.children, vec!["3"]);
         assert_eq!(node2.fi.to_string(), fi1.to_string());
 
-        let node3 = tree.nodes.get("3").unwrap();
-        assert_eq!(node3.parent_id, Some("2".to_string()));
+        let node3 = tree.nodes.get(&"3".into()).unwrap();
+        assert_eq!(node3.parent_id, Some("2".into()));
         assert_eq!(node3.children, vec!["4"]);
         assert_eq!(node3.fi.to_string(), fi3.to_string());
 
-        let node4 = tree.nodes.get("4").unwrap();
-        assert_eq!(node4.parent_id, Some("3".to_string()));
+        let node4 = tree.nodes.get(&"4".into()).unwrap();
+        assert_eq!(node4.parent_id, Some("3".into()));
         assert!(node4.children.is_empty());
         assert_eq!(node4.fi.to_string(), fi4.to_string());
     }

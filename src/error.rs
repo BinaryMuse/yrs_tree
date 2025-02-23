@@ -1,10 +1,14 @@
 use std::{error::Error, fmt};
 
+use crate::node::NodeId;
+
 /// Errors that can occur when manipulating a tree.
 pub enum TreeError {
-    Cycle(String, String),
-    MissingParent(String),
-    InvalidTarget(String),
+    Cycle(NodeId, NodeId),
+    MissingParent(NodeId),
+    InvalidTarget(NodeId),
+    UnsupportedOperation(String),
+    InvalidId(String),
 }
 
 impl Error for TreeError {}
@@ -15,6 +19,10 @@ impl fmt::Debug for TreeError {
             TreeError::Cycle(child, parent) => write!(f, "Cycle({} -> {})", child, parent),
             TreeError::MissingParent(parent) => write!(f, "MissingParent({})", parent),
             TreeError::InvalidTarget(target) => write!(f, "InvalidTarget({})", target),
+            TreeError::UnsupportedOperation(operation) => {
+                write!(f, "UnsupportedOperation({})", operation)
+            }
+            TreeError::InvalidId(id) => write!(f, "InvalidId({})", id),
         }
     }
 }
@@ -31,6 +39,10 @@ impl fmt::Display for TreeError {
             TreeError::InvalidTarget(target) => {
                 write!(f, "Invalid target: {}", target)
             }
+            TreeError::UnsupportedOperation(operation) => {
+                write!(f, "Unsupported operation: {}", operation)
+            }
+            TreeError::InvalidId(id) => write!(f, "Invalid ID: {}", id),
         }
     }
 }

@@ -1,11 +1,10 @@
 use std::{error::Error, sync::Arc};
 
-use yrs_tree::{Tree, TreeUpdateEvent};
+use yrs_tree::{NodeApi, Tree, TreeUpdateEvent};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let doc = Arc::new(yrs::Doc::new());
     let tree = Tree::new(doc.clone(), "test");
-    let root = tree.root();
 
     let _sub = tree.on_change(|e| {
         let TreeUpdateEvent(tree) = e;
@@ -13,9 +12,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     println!("Add 1 to ROOT");
-    let node1 = root.create_child_with_id("1")?;
+    let node1 = tree.create_child_with_id("1")?;
     println!("Add 2 to ROOT");
-    let node2 = root.create_child_with_id("2")?;
+    let node2 = tree.create_child_with_id("2")?;
     println!("Add 3 to 1");
     let node3 = node1.create_child_with_id("3")?;
     println!("Add 4 to 2");

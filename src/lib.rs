@@ -8,5 +8,5 @@ mod tree_structure;
 
 pub use error::TreeError;
 pub use events::{Subscription, TreeObserver, TreeUpdateEvent};
-pub use node::Node;
-pub use tree::Tree;
+pub use node::{Node, NodeApi, NodeId};
+pub use tree::{DfsIter, Tree};

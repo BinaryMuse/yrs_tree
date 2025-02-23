@@ -1,6 +1,6 @@
 # yrs_tree
 
-A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/). Changes among clients are guaranteed to converge into a consistent state, and the tree ensures that conflicts and cycles are handled correctly.
+A tree CRDT for Yrs, a Rust implementation of Yjs, based on the algorithm described in [Evan Wallace's article on CRDT Mutable Tree Hierarchies](https://madebyevan.com/algos/crdt-mutable-tree-hierarchy/). Changes among clients are guaranteed to converge to a consistent state, and the tree ensures that conflicts and cycles are handled correctly.
 
 ## Installation
 
@@ -16,13 +16,12 @@ cargo add yrs_tree
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yrs_tree::{Tree, TreeUpdateEvent};
+use yrs_tree::{Tree, TreeUpdateEvent, NodeApi};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Yjs document and tree
     let doc = Arc::new(yrs::Doc::new());
     let tree = Tree::new(doc.clone(), "test");
-    let root = tree.root();
 
     // Subscribe to tree changes
     let sub = tree.on_change(|e| {
@@ -32,8 +31,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // Create and manipulate nodes
-    let node1 = root.create_child_with_id("1")?;
-    let node2 = root.create_child_with_id("2")?;
+    let node1 = tree.create_child_with_id("1")?;
+    let node2 = tree.create_child_with_id("2")?;
     let node3 = node1.create_child_with_id("3")?;
     let node4 = node2.create_child_with_id("4")?;
 
@@ -50,7 +49,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     assert_eq!(
         nodes,
-        vec![("__ROOT__", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
+        vec![("<ROOT>", 0), ("2", 1), ("3", 2), ("4", 2), ("1", 1)]
             .iter()
             .map(|(id, depth)| (id.to_string(), *depth as usize))
             .collect::<Vec<_>>()
@@ -64,7 +63,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yrs_tree::Tree;
+use yrs_tree::{NodeApi, Tree};
 use yrs::{updates::decoder::Decode, ReadTxn, Transact, Update};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -76,9 +75,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let tree2 = Tree::new(doc2.clone(), "test");
 
     // Make changes to tree1
-    let root1 = tree1.root();
-    let node1 = root1.create_child_with_id("1")?;
-    let node2 = root1.create_child_with_id("2")?;
+    let node1 = tree1.create_child_with_id("1")?;
+    let node2 = tree1.create_child_with_id("2")?;
     
     // Sync changes to tree2
     let txn = doc1.transact();

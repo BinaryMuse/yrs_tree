@@ -104,6 +104,23 @@ impl TreeStructure {
         self.nodes.get(id)
     }
 
+    pub(crate) fn delete_nodes(
+        &mut self,
+        ids: &[NodeId],
+        map: &MapRef,
+        txn: &mut yrs::TransactionMut,
+    ) -> Result<()> {
+        if ids.contains(&NodeId::Root) {
+            return Err(TreeError::InvalidTarget(NodeId::Root.into()).into());
+        }
+
+        for id in ids {
+            map.remove(txn, &id.to_string());
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn init_from_yjs(&mut self, map: &MapRef, txn: &yrs::TransactionMut) -> Result<()> {
         // Clear nodes in case of re-initialization due to large Yjs updates
         self.nodes.clear();

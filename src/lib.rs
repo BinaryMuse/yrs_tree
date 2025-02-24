@@ -1,15 +1,17 @@
 #![doc = include_str!("../README.md")]
 
 mod error;
-mod events;
-mod node;
+pub mod events;
+pub mod iter;
+pub mod node;
 mod tree;
 mod tree_structure;
 
 pub use error::TreeError;
-pub use events::{Subscription, TreeEvent, TreeObserver};
-pub use node::{Node, NodeApi, NodeId};
-pub use tree::{DfsIter, Tree};
+pub use events::TreeEvent;
+pub use iter::TraversalOrder;
+pub use node::{DeleteStrategy, Node, NodeApi, NodeId};
+pub use tree::Tree;
 
 /// A convenience type alias for the result of tree operations.
 pub type Result<T> = std::result::Result<T, TreeError>;

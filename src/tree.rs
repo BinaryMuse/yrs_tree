@@ -8,10 +8,11 @@ use parking_lot::{ReentrantMutex, RwLock};
 use yrs::{block::Prelim, DeepObservable, MapRef, Transact};
 
 use crate::{
-    events::TreeEvent,
-    node::{Node, NodeId},
+    events::{Subscription, TreeEvent, TreeObserver},
+    iter::{TraversalOrder, TreeIter},
+    node::{DeleteStrategy, Node, NodeId},
     tree_structure::TreeStructure,
-    Result, Subscription, TreeError, TreeObserver,
+    Result, TreeError,
 };
 
 pub use crate::node::NodeApi;
@@ -35,7 +36,7 @@ pub use crate::node::NodeApi;
 /// events via [`Tree::on_change`].
 #[derive(Clone)]
 pub struct Tree {
-    structure: Arc<ReentrantMutex<RefCell<TreeStructure>>>,
+    pub(crate) structure: Arc<ReentrantMutex<RefCell<TreeStructure>>>,
     doc: Arc<yrs::Doc>,
     yjs_map: Arc<RwLock<MapRef>>,
     observer: Arc<TreeObserver>,
@@ -219,6 +220,53 @@ impl Tree {
         }
     }
 
+    pub(crate) fn delete_node(
+        self: &Arc<Self>,
+        id: &NodeId,
+        strategy: DeleteStrategy,
+    ) -> Result<()> {
+        let to_delete = match strategy {
+            DeleteStrategy::Promote => vec![id.clone()],
+            DeleteStrategy::Cascade => {
+                let node = self.get_node(id.clone()).unwrap();
+                let mut to_delete = node
+                    .traverse(TraversalOrder::BreadthFirst)
+                    .map(|n| n.id().clone())
+                    .collect::<Vec<_>>();
+                to_delete.reverse();
+                to_delete
+            }
+        };
+
+        if strategy == DeleteStrategy::Promote {
+            let parent = self
+                .get_parent(id)
+                .ok_or(TreeError::InvalidTarget(id.clone()))?;
+            let children = self.get_children(id);
+            for child in children {
+                self.update_node(&child, &parent, None)?;
+            }
+        }
+
+        self.delete_nodes(&to_delete)
+    }
+
+    pub(crate) fn delete_nodes(self: &Arc<Self>, ids: &[NodeId]) -> Result<()> {
+        if let Some(poisioned) = self.poisioned.borrow().as_ref() {
+            return Err(TreeError::TreePoisoned(Box::new(poisioned.clone())).into());
+        }
+
+        let mut txn = self.doc.transact_mut_with("yrs_tree");
+        let map = self.yjs_map.write();
+        let lock = self.structure.lock();
+        let mut structure = lock.borrow_mut();
+
+        let result = structure.delete_nodes(ids, &map, &mut txn);
+        drop(structure);
+
+        result
+    }
+
     pub(crate) fn set_data<V: Prelim + Into<yrs::Any>>(
         self: &Arc<Self>,
         id: &NodeId,
@@ -298,13 +346,12 @@ impl Tree {
         self.observer.subscribe(callback)
     }
 
-    /// Returns an iterator over the nodes in the tree in depth-first order.
-    ///
-    /// The iterator is a snapshot of the tree at the time of the call, and
-    /// will not reflect changes to the tree while the iterator is in use.
-    pub fn traverse_dfs(self: &Arc<Self>) -> DfsIter {
-        let structure = self.structure.lock().borrow().clone();
-        DfsIter::new(structure, self.clone())
+    pub(crate) fn traverse_starting_at(
+        self: &Arc<Self>,
+        start: &NodeId,
+        order: TraversalOrder,
+    ) -> TreeIter {
+        TreeIter::new(self.clone(), start, order)
     }
 }
 
@@ -361,15 +408,37 @@ impl NodeApi for Tree {
 
     #[inline]
     fn parent(self: &Arc<Self>) -> Option<Arc<Node>> {
-        None
+        self.root().parent()
     }
 
+    #[inline]
+    fn ancestors(self: &Arc<Self>) -> Vec<Arc<Node>> {
+        self.root().ancestors()
+    }
+
+    #[inline]
+    fn descendants(self: &Arc<Self>, order: TraversalOrder) -> Vec<Arc<Node>> {
+        self.root().descendants(order)
+    }
+
+    #[inline]
     fn siblings(self: &Arc<Self>) -> Vec<Arc<Node>> {
-        vec![]
+        self.root().siblings()
     }
 
+    #[inline]
     fn depth(self: &Arc<Self>) -> usize {
-        0
+        self.root().depth()
+    }
+
+    #[inline]
+    fn delete(self: &Arc<Self>, strategy: DeleteStrategy) -> Result<()> {
+        self.root().delete(strategy)
+    }
+
+    #[inline]
+    fn traverse(self: &Arc<Self>, order: TraversalOrder) -> TreeIter {
+        self.clone().traverse_starting_at(self.root().id(), order)
     }
 }
 
@@ -388,7 +457,7 @@ impl fmt::Debug for Tree {
 impl fmt::Display for Tree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let tree = Arc::new(self.clone());
-        let iter = tree.traverse_dfs();
+        let iter = tree.traverse(TraversalOrder::DepthFirst);
         let mut last_depth = 0;
         let mut is_last_at_depth = vec![false];
 
@@ -435,72 +504,6 @@ impl fmt::Display for Tree {
     }
 }
 
-/// An iterator over the nodes in the tree in depth-first order.
-///
-/// The iterator is a snapshot of the tree at the time of the call, and
-/// will not reflect changes to the tree while the iterator is in use.
-pub struct DfsIter {
-    tree: Arc<Tree>,
-    structure: TreeStructure,
-    last_node: Option<NodeId>,
-}
-
-impl DfsIter {
-    pub(crate) fn new(structure: TreeStructure, tree: Arc<Tree>) -> Self {
-        Self {
-            tree,
-            structure,
-            last_node: None,
-        }
-    }
-}
-
-impl Iterator for DfsIter {
-    type Item = Arc<Node>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(last_node) = &self.last_node {
-            // Get children of last visited node
-            let children = self.structure.get_children(last_node)?;
-
-            if !children.is_empty() {
-                // If there are children, visit first child
-                let next_id = &children[0];
-                self.last_node = Some(next_id.clone());
-                Some(Node::new(next_id.clone(), self.tree.clone()))
-            } else {
-                // No children, backtrack to find next sibling
-                let mut current = last_node.clone();
-                loop {
-                    let parent_id = self.structure.get_parent(&current)?;
-                    let siblings = self.structure.get_children(parent_id)?;
-                    let current_idx = siblings.iter().position(|id| id == &current)?;
-
-                    if current_idx + 1 < siblings.len() {
-                        // Found next sibling
-                        let next_id = &siblings[current_idx + 1];
-                        self.last_node = Some(next_id.clone());
-                        return Some(Node::new(next_id.clone(), self.tree.clone()));
-                    }
-
-                    if parent_id == &NodeId::Root {
-                        // Reached root while backtracking, iteration complete
-                        return None;
-                    }
-
-                    // Continue backtracking
-                    current = parent_id.clone();
-                }
-            }
-        } else {
-            // Start at root
-            let root = Node::new(NodeId::Root, self.tree.clone());
-            self.last_node = Some(root.id().clone());
-            Some(root)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::error::Error;
@@ -529,7 +532,7 @@ mod tests {
         node4.move_before(&node3)?;
 
         let nodes = tree
-            .traverse_dfs()
+            .traverse(TraversalOrder::DepthFirst)
             .map(|n| (n.id().to_string(), n.depth()))
             .collect::<Vec<_>>();
 
@@ -605,7 +608,7 @@ mod tests {
         node_b1.move_to(&node_d1, None)?;
 
         let nodes = tree1
-            .traverse_dfs()
+            .traverse(TraversalOrder::DepthFirst)
             .map(|n| n.id().to_string())
             .collect::<Vec<_>>();
 
@@ -654,6 +657,56 @@ mod tests {
 
         assert_eq!(tree.is_poisoned(), true);
         assert_eq!(*poisoned.lock(), true);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_promote() -> Result<()> {
+        let doc = Arc::new(yrs::Doc::new());
+        let tree = Tree::new(doc.clone(), "test")?;
+
+        let node1 = tree.create_child_with_id("1")?;
+        let node2 = tree.create_child_with_id("2")?;
+        let node3 = node1.create_child_with_id("3")?;
+        let _node4 = node1.create_child_with_id("4")?;
+        let _node5 = node2.create_child_with_id("5")?;
+        let _node6 = node2.create_child_with_id("6")?;
+        let _node7 = node3.create_child_with_id("7")?;
+
+        node3.delete(DeleteStrategy::Promote)?;
+
+        let nodes = tree
+            .traverse(TraversalOrder::BreadthFirst)
+            .map(|n| n.id().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(nodes, vec!["<ROOT>", "1", "2", "4", "7", "5", "6"]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_delete_cascade() -> Result<()> {
+        let doc = Arc::new(yrs::Doc::new());
+        let tree = Tree::new(doc.clone(), "test")?;
+
+        let node1 = tree.create_child_with_id("1")?;
+        let node2 = tree.create_child_with_id("2")?;
+        let node3 = node1.create_child_with_id("3")?;
+        let _node4 = node1.create_child_with_id("4")?;
+        let _node5 = node2.create_child_with_id("5")?;
+        let _node6 = node2.create_child_with_id("6")?;
+        let _node7 = node3.create_child_with_id("7")?;
+
+        node3.delete(DeleteStrategy::Cascade)?;
+
+        let nodes = tree
+            .traverse(TraversalOrder::BreadthFirst)
+            .map(|n| n.id().to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(nodes, vec!["<ROOT>", "1", "2", "4", "5", "6"]);
 
         Ok(())
     }

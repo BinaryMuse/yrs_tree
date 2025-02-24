@@ -4,7 +4,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 use yrs::block::Prelim;
 
-use crate::{Result, Tree, TreeError};
+use crate::{
+    iter::{TraversalOrder, TreeIter},
+    Result, Tree, TreeError,
+};
 
 /// The ID of a node in a tree. Strings can be made into `NodeId`s using the `into()` method,
 /// and `NodeId`s can be converted back into strings using the `to_string()` method.
@@ -157,18 +160,46 @@ pub trait NodeApi {
     /// ```
     fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<()>;
 
+    /// Returns the parent of the node.
+    fn parent(self: &Arc<Self>) -> Option<Arc<Node>>;
+
+    /// Returns the ancestors of the node, starting with the node's parent and ending
+    /// at the root node.
+    fn ancestors(self: &Arc<Self>) -> Vec<Arc<Node>>;
+
     /// Returns the children of the node.
     fn children(self: &Arc<Self>) -> Vec<Arc<Node>>;
 
-    /// Returns the parent of the node.
-    fn parent(self: &Arc<Self>) -> Option<Arc<Node>>;
+    /// Returns the descendants of the node. Equivalent to `self.traverse(order).skip(1).collect()`.
+    fn descendants(self: &Arc<Self>, order: TraversalOrder) -> Vec<Arc<Node>>;
 
     /// Returns the siblings of the node.
     fn siblings(self: &Arc<Self>) -> Vec<Arc<Node>>;
 
+    /// Returns an iterator over the node and its descendants in the given order.
+    fn traverse(self: &Arc<Self>, order: TraversalOrder) -> TreeIter;
+
     /// Returns the depth of the node. The root node has a depth of 0; all other
     /// nodes have a depth of 1 plus the depth of their parent.
     fn depth(self: &Arc<Self>) -> usize;
+
+    /// Deletes the node from the tree.
+    ///
+    /// `strategy` can be one of:
+    ///   * [`DeleteStrategy::Promote`] - assign this Node's children
+    ///     to its parent, placing them at the end of the vector.
+    ///   * [`DeleteStrategy::Cascade`] - deletes this node and all its children,
+    ///     in reverse-depth-first order.
+    fn delete(self: &Arc<Self>, strategy: DeleteStrategy) -> Result<()>;
+}
+
+/// The strategy to use when deleting a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteStrategy {
+    /// Promote this node's children to the node's parent.
+    Promote,
+    /// Cascade the deletion to this node's children.
+    Cascade,
 }
 
 /// A node in a tree.
@@ -342,10 +373,27 @@ impl NodeApi for Node {
             .collect()
     }
 
+    fn descendants(self: &Arc<Self>, order: TraversalOrder) -> Vec<Arc<Self>> {
+        // Don't list ourselves as a descendant
+        self.traverse(order).skip(1).collect()
+    }
+
     fn parent(self: &Arc<Self>) -> Option<Arc<Self>> {
         self.tree
             .get_parent(&self.id)
             .map(|id| Node::new(id, self.tree.clone()))
+    }
+
+    fn ancestors(self: &Arc<Self>) -> Vec<Arc<Self>> {
+        let mut ancestors = vec![];
+        let mut current = self.parent();
+
+        while let Some(parent) = current {
+            ancestors.push(parent.clone());
+            current = parent.parent();
+        }
+
+        ancestors
     }
 
     fn siblings(self: &Arc<Self>) -> Vec<Arc<Self>> {
@@ -354,6 +402,10 @@ impl NodeApi for Node {
         } else {
             vec![]
         }
+    }
+
+    fn traverse(self: &Arc<Self>, order: TraversalOrder) -> TreeIter {
+        self.tree.traverse_starting_at(self.id(), order)
     }
 
     fn depth(self: &Arc<Self>) -> usize {
@@ -384,6 +436,10 @@ impl NodeApi for Node {
 
     fn move_after(self: &Arc<Self>, other: &Arc<Node>) -> Result<()> {
         self.move_relative(other, 1)
+    }
+
+    fn delete(self: &Arc<Self>, strategy: DeleteStrategy) -> Result<()> {
+        self.tree.delete_node(&self.id, strategy)
     }
 }
 

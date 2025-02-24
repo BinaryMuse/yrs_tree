@@ -35,7 +35,7 @@ When a tree is poisoned, any operations on the tree that rely on the Yrs documen
 
 ```rust
 use std::{error::Error, sync::Arc};
-use yrs_tree::{Tree, TreeEvent, NodeApi};
+use yrs_tree::{NodeApi, Tree, TreeEvent, TraversalOrder};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Yjs document and tree
@@ -74,7 +74,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Iterate over the tree in depth-first order
     let nodes = tree
-        .traverse_dfs()
+        .traverse(TraversalOrder::DepthFirst)
         .map(|n| (n.id().to_string(), n.depth()))
         .collect::<Vec<_>>();
 

@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "yrs_tree"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "fractional_index",
  "parking_lot",

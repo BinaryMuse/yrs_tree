@@ -22,8 +22,8 @@ You can [find the complete documentation on Docs.rs](https://docs.rs/yrs_tree/).
 Quick links:
 
 * [`Tree` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/struct.Tree.html)
-* [`Node` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/struct.Node.html)
-* [`NodeApi` Trait Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/trait.NodeApi.html)
+* [`Node` API Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/node/struct.Node.html)
+* [`NodeApi` Trait Documentation](https://docs.rs/yrs_tree/latest/yrs_tree/node/trait.NodeApi.html)
 
 ## Tree Poisoning
 
